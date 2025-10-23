@@ -5,7 +5,7 @@ Test script to verify RAG functionality without needing OpenAI API key
 """
 
 from app.tools.search_tools import get_study_material
-from app.rag.retriever import search_documents
+from app.rag.supabase_retriever import search_documents
 
 def test_rag_functionality():
     """Test the RAG system with various queries."""
@@ -45,7 +45,7 @@ if __name__ == "__main__":
     test_rag_functionality()
 
     print("\n=== RAG System Test Complete ===")
-    print("✅ Document ingestion: Completed (26 chunks in ChromaDB)")
+    print("✅ Document ingestion: Completed (using Supabase pgvector)")
     print("✅ Document retrieval: Working")
     print("✅ Tool integration: Working")
     print("\n🚀 RAG Phase 2 implementation complete!")

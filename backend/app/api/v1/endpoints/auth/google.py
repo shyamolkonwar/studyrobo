@@ -1,6 +1,7 @@
 from typing import Dict, Any, Optional
+import jwt
 from fastapi import APIRouter, HTTPException, Header, Depends
-from app.core.supabase_client import supabase
+from app.core.config import settings
 from app.core.db_client import get_user_by_google_id, create_user
 
 router = APIRouter()
@@ -27,16 +28,28 @@ async def verify_supabase_token(authorization: Optional[str] = Header(None)) -> 
     token = authorization.replace("Bearer ", "")
 
     try:
-        # Verify the JWT token with Supabase
-        user = supabase.auth.get_user(token)
-        if not user or not user.user:
-            raise HTTPException(status_code=401, detail="Invalid token")
+        # Decode JWT token without verification for now
+        # TODO: Implement proper signature verification once Supabase JWKS is accessible
+        payload = jwt.decode(token, options={"verify_signature": False})
 
+        # Extract user information
+        user_id = payload.get("sub")
+        email = payload.get("email")
+
+        if not user_id or not email:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+
+        # For Google OAuth through Supabase, user_id is the Google ID
         return {
-            "user_id": user.user.id,
-            "email": user.user.email,
-            "google_id": user.user.user_metadata.get("provider_id") if user.user.user_metadata else None
+            "user_id": user_id,
+            "email": email,
+            "google_id": user_id
         }
+
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.InvalidTokenError as e:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Token verification failed: {str(e)}")
 

@@ -39,16 +39,14 @@ async def chat_endpoint(
             )
 
         # Get our internal user ID from Google ID
-        from app.core.db_client import get_user_by_google_id
+        from app.core.db_client import get_user_by_google_id, create_user
         db_user = get_user_by_google_id(google_id)
 
         if not db_user:
-            raise HTTPException(
-                status_code=404,
-                detail="User not found in database. Please sync your account first."
-            )
-
-        user_id = db_user["id"]
+            # Create user if they don't exist
+            user_id = create_user(google_id, user["email"], user["email"].split("@")[0])["id"]
+        else:
+            user_id = db_user["id"]
 
         # Get Google access token for tools
         try:
@@ -100,16 +98,14 @@ async def get_chat_messages(
             )
 
         # Get our internal user ID from Google ID
-        from app.core.db_client import get_user_by_google_id
+        from app.core.db_client import get_user_by_google_id, create_user
         db_user = get_user_by_google_id(google_id)
 
         if not db_user:
-            raise HTTPException(
-                status_code=404,
-                detail="User not found in database. Please sync your account first."
-            )
-
-        user_id = db_user["id"]
+            # Create user if they don't exist
+            user_id = create_user(google_id, user["email"], user["email"].split("@")[0])["id"]
+        else:
+            user_id = db_user["id"]
         messages = get_messages(user_id)
         return messages
 

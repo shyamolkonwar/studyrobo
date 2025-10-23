@@ -19,6 +19,7 @@ export default function Home() {
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [user, setUser] = useState<any>(null);
+  const [internalUserId, setInternalUserId] = useState<number | null>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -30,6 +31,10 @@ export default function Home() {
         return;
       }
       setUser(session.user);
+      // Store provider token if available
+      if (session.provider_token) {
+        localStorage.setItem('googleAccessToken', session.provider_token);
+      }
     };
 
     checkUser();
@@ -38,16 +43,58 @@ export default function Home() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (!session) {
         router.push('/auth/login');
+        localStorage.removeItem('googleAccessToken');
       } else {
         setUser(session.user);
+        // Store provider token if available (e.g., after OAuth login)
+        if (session.provider_token) {
+          localStorage.setItem('googleAccessToken', session.provider_token);
+        }
       }
     });
 
     return () => subscription.unsubscribe();
   }, [router]);
 
+  // Function to get or create internal user ID
+  const getOrCreateInternalUser = async (googleUser: any): Promise<number | null> => {
+    try {
+      const { data, error } = await supabase.rpc('get_or_create_user', {
+        p_google_id: googleUser.id,
+        p_email: googleUser.email,
+        p_name: googleUser.user_metadata?.name || googleUser.email
+      });
+
+      if (error) {
+        console.error('Error getting/creating internal user:', error);
+        return null;
+      }
+
+      return data as number;
+    } catch (error) {
+      console.error('Error getting/creating internal user:', error);
+      return null;
+    }
+  };
+
   useEffect(() => {
     if (!user) return;
+
+    // Get internal user ID first
+    const getInternalUserId = async () => {
+      const userId = await getOrCreateInternalUser(user);
+      if (userId) {
+        setInternalUserId(userId);
+      } else {
+        console.error('Failed to get internal user ID');
+      }
+    };
+
+    getInternalUserId();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || !internalUserId) return;
 
     // Load chat history from Supabase
     const loadMessages = async () => {
@@ -55,7 +102,7 @@ export default function Home() {
         const { data, error } = await supabase
           .from('messages')
           .select('*')
-          .eq('user_id', user.id)
+          .eq('user_id', internalUserId)
           .order('created_at', { ascending: true });
 
         if (error) {
@@ -69,7 +116,7 @@ export default function Home() {
     };
 
     loadMessages();
-  }, [user]);
+  }, [user, internalUserId]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -80,14 +127,22 @@ export default function Home() {
     e.preventDefault();
     if (!inputText.trim() || !user) return;
 
-    // Get the session to access the Google token
-    const { data: { session } } = await supabase.auth.getSession();
-    const googleAccessToken = session?.provider_token;
-
-    if (!googleAccessToken) {
-      alert("Please log in again to sync with Google.");
+    // Refresh the session to ensure token is valid
+    const { data: { session }, error } = await supabase.auth.refreshSession();
+    if (error || !session) {
+      alert("Session expired. Please log in again.");
+      router.push('/auth/login');
       return;
     }
+
+    let googleAccessToken = session.provider_token;
+
+    // If not in session, try to get from localStorage
+    if (!googleAccessToken) {
+      googleAccessToken = localStorage.getItem('googleAccessToken');
+    }
+
+    // Note: Google token is optional for basic chat functionality
 
     // Add user message to local state
     const userMessage: Message = {

@@ -9,8 +9,9 @@ import asyncio
 from datetime import datetime
 from typing import Dict, Any, List
 from app.core.db_client import mark_attendance as db_mark_attendance, execute_query
+from app.core.supabase_client import supabase
 
-def mark_attendance(user_id: int, course_name: str) -> Dict[str, Any]:
+def mark_attendance(course_name: str, user_id: str) -> Dict[str, Any]:
     """
     Mark attendance for a specific course and user using database.
 
@@ -18,15 +19,15 @@ def mark_attendance(user_id: int, course_name: str) -> Dict[str, Any]:
     Much faster and more reliable than Google Sheets integration.
 
     Args:
-        user_id (int): The user's ID from database
         course_name (str): Name of the course (e.g., "CS101", "Math201")
+        user_id (str): The user's UUID from Supabase Auth
 
     Returns:
         Dict[str, Any]: Confirmation of attendance marking
     """
     try:
         # Mark attendance in database
-        db_mark_attendance(user_id, course_name)
+        db_mark_attendance(course_name, user_id)
 
         # Get current timestamp
         timestamp = datetime.now().isoformat()
@@ -62,8 +63,7 @@ def get_attendance_records(user_id: str, course_name: str = None) -> Dict[str, A
         Dict[str, Any]: Attendance records
     """
     try:
-        # Get Supabase client
-        supabase = get_supabase_client()
+        # Use the imported Supabase client
 
         # Build query
         query = supabase.table('attendance').select('*').eq('user_id', user_id)

@@ -17,7 +17,7 @@ def get_study_material(query: str) -> Dict[str, Any]:
     """
     try:
         # Search for relevant documents
-        context = search_documents(query, n_results=4)
+        context = search_documents(query, match_count=4)
 
         return {
             "success": True,
