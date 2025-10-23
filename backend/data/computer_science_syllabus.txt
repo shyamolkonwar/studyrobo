@@ -1,0 +1,43 @@
+Computer Science 101 - Course Syllabus
+
+Course Overview:
+This course introduces fundamental concepts of computer science and programming.
+
+Key Topics:
+1. Programming Fundamentals
+   - Variables and data types
+   - Control structures (if/else, loops)
+   - Functions and methods
+   - Object-oriented programming basics
+
+2. Data Structures
+   - Arrays and lists
+   - Stacks and queues
+   - Trees and graphs
+   - Hash tables
+
+3. Algorithms
+   - Sorting algorithms (bubble sort, quicksort, mergesort)
+   - Search algorithms (linear, binary search)
+   - Time and space complexity
+   - Big O notation
+
+4. Computer Architecture
+   - CPU and memory hierarchy
+   - Input/output systems
+   - Basic computer organization
+
+Assessment:
+- Midterm Exam: 30% (Covers topics 1-2)
+- Final Exam: 40% (Comprehensive)
+- Programming Projects: 25%
+- Class Participation: 5%
+
+Important Dates:
+- Midterm: October 15th
+- Final Exam: December 10th
+- Project 1 Due: September 30th
+- Project 2 Due: November 20th
+
+Required Textbook:
+"Introduction to Computer Science" by Smith and Johnson, 3rd Edition
