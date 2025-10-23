@@ -1,5 +1,5 @@
 from typing import Dict, Any
-from app.rag.retriever import search_documents
+from app.rag.supabase_retriever import search_documents
 
 def get_study_material(query: str) -> Dict[str, Any]:
     """

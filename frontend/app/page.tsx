@@ -1,26 +1,47 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 interface Message {
-  id: number;
-  text: string;
-  sender: 'user' | 'bot';
+  role: string;
+  content: string;
+  created_at: string;
 }
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const userId = 1; // Hardcoded for demo
+
+  useEffect(() => {
+    // Load chat history
+    const loadMessages = async () => {
+      try {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/chat/messages`, {
+          headers: {
+            'x-user-id': userId.toString(),
+          },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setMessages(data);
+        }
+      } catch (error) {
+        console.error('Error loading messages:', error);
+      }
+    };
+    loadMessages();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputText.trim()) return;
 
     const userMessage: Message = {
-      id: Date.now(),
-      text: inputText,
-      sender: 'user'
+      role: 'user',
+      content: inputText,
+      created_at: new Date().toISOString(),
     };
 
     setMessages(prev => [...prev, userMessage]);
@@ -32,6 +53,8 @@ export default function Home() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-user-id': userId.toString(),
+          'x-google-token': 'dummy', // For demo
         },
         body: JSON.stringify({ message: inputText }),
       });
@@ -43,18 +66,18 @@ export default function Home() {
       const data = await response.json();
 
       const botMessage: Message = {
-        id: Date.now() + 1,
-        text: data.reply,
-        sender: 'bot'
+        role: 'ai',
+        content: data.reply,
+        created_at: new Date().toISOString(),
       };
 
       setMessages(prev => [...prev, botMessage]);
     } catch (error) {
       console.error('Error sending message:', error);
       const errorMessage: Message = {
-        id: Date.now() + 1,
-        text: 'Sorry, something went wrong. Please try again.',
-        sender: 'bot'
+        role: 'ai',
+        content: 'Sorry, something went wrong. Please try again.',
+        created_at: new Date().toISOString(),
       };
       setMessages(prev => [...prev, errorMessage]);
     } finally {
@@ -84,19 +107,19 @@ export default function Home() {
             </div>
           ) : (
             <div className="space-y-4">
-              {messages.map((message) => (
+              {messages.map((message, index) => (
                 <div
-                  key={message.id}
-                  className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                  key={index}
+                  className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
                     className={`max-w-[70%] p-3 rounded-lg ${
-                      message.sender === 'user'
+                      message.role === 'user'
                         ? 'bg-blue-500 text-white'
                         : 'bg-white border border-gray-200 text-gray-900'
                     }`}
                   >
-                    {message.text}
+                    {message.content}
                   </div>
                 </div>
               ))}
