@@ -8,6 +8,10 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Database URL
 database_url = os.environ.get("DATABASE_URL")

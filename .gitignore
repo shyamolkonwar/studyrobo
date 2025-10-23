@@ -46,3 +46,4 @@ logs/
 *.log
 xvs.txt
 pivot.txt
+LLM_CONFIGURATION.md

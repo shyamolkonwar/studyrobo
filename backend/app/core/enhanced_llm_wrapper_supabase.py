@@ -1,24 +1,20 @@
 """
 Enhanced LLM wrapper with Supabase integration
 Replaces ChromaDB and service account tools with Supabase-based alternatives
+Supports dynamic LLM provider selection (OpenAI, Mistral)
 """
 
 import os
 import json
 import asyncio
 from typing import List, Dict, Any, Optional
-from openai import AsyncOpenAI
 from app.core.config import settings
+from app.core.llm_factory import get_llm_provider
 from app.core.chat_memory import get_conversation_history, add_message, format_conversation_for_llm
 from app.tools.search_tools import get_study_material, get_study_material_tool
 from app.tools.career_tools import get_career_insights, get_career_insights_tool
 from app.tools.attendance_tools_supabase import mark_attendance, get_attendance_records, mark_attendance_tool, get_attendance_records_tool
 from app.tools.email_tools_supabase import get_unread_emails, draft_email, get_unread_emails_tool, draft_email_tool
-
-# Initialize OpenAI client
-client = None
-if settings.OPENAI_API_KEY and settings.OPENAI_API_KEY != "your_openai_api_key_here":
-    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
 def detect_intent(message: str) -> str:
     """
@@ -148,22 +144,21 @@ async def get_llm_response_with_supabase(
 ) -> str:
     """
     Enhanced LLM response function with Supabase integration and chat memory.
+    Supports dynamic LLM provider selection (OpenAI, Mistral).
 
     This function:
     1. Retrieves conversation history from Supabase
     2. Detects user intent based on message content
     3. Creates appropriate system prompt with context
-    4. Provides all relevant tools to OpenAI
-    5. Executes tool calls when requested by OpenAI
+    4. Provides all relevant tools to the selected LLM
+    5. Executes tool calls when requested by the LLM
     6. Stores conversation in Supabase
     7. Returns formatted responses
     """
-    # Mock response if no API key is configured
-    if not client:
-        intent = detect_intent(message)
-        return f"Hi! I received your message: '{message}'. This appears to be about {intent}. This is a mock response since no OpenAI API key is configured. Please add your OpenAI API key to the backend/.env file to get real AI responses."
-
     try:
+        # Get the configured LLM provider
+        llm_provider = get_llm_provider()
+
         # Store user message in chat memory
         if user_id:
             add_message(user_id, 'user', message)
@@ -183,32 +178,37 @@ async def get_llm_response_with_supabase(
         if conversation_context and conversation_context != "No previous conversation history.":
             system_prompt += f"\n\nRecent conversation context:\n{conversation_context}"
 
-        # Prepare tools for function calling
-        tools = get_all_tools()
+        # Prepare messages
+        messages = [
+            {
+                "role": "system",
+                "content": system_prompt
+            },
+            {"role": "user", "content": message}
+        ]
 
-        response = await client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt
-                },
-                {"role": "user", "content": message}
-            ],
+        # Get tools - only for OpenAI since Mistral doesn't support tool calling yet
+        tools = []
+        if settings.LLM_PROVIDER == "openai":
+            tools = get_all_tools()
+
+        # Create completion with the selected LLM
+        response = await llm_provider.create_completion(
+            messages=messages,
             tools=tools,
-            tool_choice="auto",
+            tool_choice="auto" if tools else None,
             max_tokens=1000,
             temperature=0.3
         )
 
-        assistant_message = response.choices[0].message
+        assistant_message = response['choices'][0]['message']
 
-        # Handle tool calls
-        if assistant_message.tool_calls:
+        # Handle tool calls (only for OpenAI)
+        if assistant_message.get('tool_calls') and settings.LLM_PROVIDER == "openai":
             tool_results = []
-            for tool_call in assistant_message.tool_calls:
-                tool_name = tool_call.function.name
-                tool_args = json.loads(tool_call.function.arguments)
+            for tool_call in assistant_message['tool_calls']:
+                tool_name = tool_call['function']['name']
+                tool_args = json.loads(tool_call['function']['arguments'])
 
                 # Execute the tool with additional parameters
                 tool_result = await execute_tool(
@@ -219,7 +219,7 @@ async def get_llm_response_with_supabase(
                 )
 
                 tool_results.append({
-                    "tool_call_id": tool_call.id,
+                    "tool_call_id": tool_call['id'],
                     "tool_name": tool_name,
                     "tool_result": tool_result
                 })
@@ -227,25 +227,20 @@ async def get_llm_response_with_supabase(
                 # Create tool result message
                 tool_message = {
                     "role": "tool",
-                    "tool_call_id": tool_call.id,
+                    "tool_call_id": tool_call['id'],
                     "name": tool_name,
                     "content": json.dumps(tool_result)
                 }
 
-                # Send tool result back to OpenAI for final response
-                final_response = await client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": message},
-                        assistant_message,
-                        tool_message
-                    ],
+                # Send tool result back to LLM for final response
+                final_messages = messages + [assistant_message, tool_message]
+                final_response = await llm_provider.create_completion(
+                    messages=final_messages,
                     max_tokens=800,
                     temperature=0.3
                 )
 
-                assistant_reply = final_response.choices[0].message.content
+                assistant_reply = final_response['choices'][0]['message']['content']
 
                 # Store AI response in chat memory
                 if user_id:
@@ -254,7 +249,7 @@ async def get_llm_response_with_supabase(
                 return assistant_reply
 
         # If no tool was called, return the regular response
-        assistant_reply = assistant_message.content
+        assistant_reply = assistant_message.get('content', '')
 
         # Store AI response in chat memory
         if user_id:
