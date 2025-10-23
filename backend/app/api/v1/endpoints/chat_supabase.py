@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Dict, Any
 from app.models.schemas import ChatRequest, ChatResponse
 from app.core.enhanced_llm_wrapper_supabase import get_llm_response_with_supabase
-from app.core.db_client import get_messages, add_message
+from app.core.db_client import get_messages, add_message, add_message_to_conversation
 from app.api.v1.endpoints.auth.google import verify_supabase_token
 
 router = APIRouter()
@@ -58,18 +58,29 @@ async def chat_endpoint(
         except:
             google_token = None
 
-        # Add user message to history
-        add_message(user_id, 'user', request.message)
+        # Add user message to history (support both old and new chat systems)
+        if request.conversation_id:
+            # New conversation-based system
+            add_message_to_conversation(request.conversation_id, 'user', request.message)
+        else:
+            # Legacy system for backwards compatibility
+            add_message(user_id, 'user', request.message)
 
         # Get AI response with user context
         reply = await get_llm_response_with_supabase(
             message=request.message,
             google_access_token=google_token,
-            user_id=str(user_id)
+            user_id=str(user_id),
+            conversation_id=request.conversation_id
         )
 
         # Add AI message to history
-        add_message(user_id, 'ai', reply)
+        if request.conversation_id:
+            # New conversation-based system
+            add_message_to_conversation(request.conversation_id, 'ai', reply)
+        else:
+            # Legacy system for backwards compatibility
+            add_message(user_id, 'ai', reply)
 
         return ChatResponse(reply=reply)
 

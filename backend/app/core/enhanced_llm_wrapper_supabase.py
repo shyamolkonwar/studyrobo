@@ -140,7 +140,8 @@ def get_all_tools() -> List[Dict[str, Any]]:
 async def get_llm_response_with_supabase(
     message: str,
     google_access_token: Optional[str] = None,
-    user_id: Optional[str] = None
+    user_id: Optional[str] = None,
+    conversation_id: Optional[str] = None
 ) -> str:
     """
     Enhanced LLM response function with Supabase integration and chat memory.
@@ -165,7 +166,22 @@ async def get_llm_response_with_supabase(
 
         # Get conversation history for context
         conversation_context = ""
-        if user_id:
+        if conversation_id:
+            # Use conversation-specific history if available
+            try:
+                from app.core.db_client import get_messages_by_conversation
+                messages = get_messages_by_conversation(conversation_id)
+                # Format messages for LLM
+                if messages:
+                    conversation_context = "\n".join([
+                        f"{'User' if msg['role'] == 'user' else 'Assistant'}: {msg['content']}"
+                        for msg in messages[-10:]  # Last 10 messages
+                    ])
+            except:
+                pass  # Fall back to user-based history if conversation-specific fails
+
+        if not conversation_context and user_id:
+            # Fallback to user-based history
             conversation_context = format_conversation_for_llm(user_id, limit=10)
 
         # Detect user intent

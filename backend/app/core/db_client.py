@@ -51,14 +51,31 @@ def create_user(google_id: str, email: str, name: str) -> int:
     return result[0]['id'] if result else None
 
 def get_messages(user_id: int) -> List[Dict[str, Any]]:
-    """Get all messages for a user"""
+    """Get all messages for a user (legacy function for compatibility)"""
     query = "SELECT role, content, created_at FROM messages WHERE user_id = %s ORDER BY created_at"
     return execute_query(query, (user_id,)) or []
 
+def get_messages_by_conversation(conversation_id: str) -> List[Dict[str, Any]]:
+    """Get all messages for a specific conversation"""
+    query = "SELECT role, content, created_at FROM messages WHERE conversation_id = %s ORDER BY created_at"
+    return execute_query(query, (conversation_id,)) or []
+
 def add_message(user_id: int, role: str, content: str):
-    """Add a message for a user"""
+    """Add a message for a user (legacy function for compatibility)"""
     query = "INSERT INTO messages (user_id, role, content) VALUES (%s, %s, %s)"
     execute_query(query, (user_id, role, content), fetch=False)
+
+def add_message_to_conversation(conversation_id: str, role: str, content: str):
+    """Add a message to a specific conversation"""
+    # First get user_id from conversation
+    user_query = "SELECT user_id FROM conversations WHERE id = %s"
+    result = execute_query(user_query, (conversation_id,))
+    if not result:
+        raise ValueError(f"Conversation {conversation_id} not found")
+
+    user_id = result[0]['user_id']
+    query = "INSERT INTO messages (conversation_id, user_id, role, content) VALUES (%s, %s, %s, %s)"
+    execute_query(query, (conversation_id, user_id, role, content), fetch=False)
 
 def mark_attendance(user_id: int, course_name: str):
     """Mark attendance for a user"""
@@ -79,6 +96,69 @@ def clear_messages(user_id: int):
     """Clear all messages for a user"""
     query = "DELETE FROM messages WHERE user_id = %s"
     execute_query(query, (user_id,), fetch=False)
+
+# Conversation management functions
+def create_conversation(google_id: str, title: str = "New Chat") -> str:
+    """Create a new conversation for a user and return the conversation ID"""
+    # First get user_id from google_id
+    user_query = "SELECT id FROM users WHERE google_id = %s"
+    result = execute_query(user_query, (google_id,))
+    if not result:
+        raise ValueError(f"User not found for Google ID: {google_id}")
+
+    user_id = result[0]['id']
+
+    # Create conversation
+    conv_query = "INSERT INTO conversations (user_id, title) VALUES (%s, %s) RETURNING id"
+    result = execute_query(conv_query, (user_id, title))
+    return result[0]['id'] if result else None
+
+def get_user_conversations(google_id: str) -> List[Dict[str, Any]]:
+    """Get all conversations for a user"""
+    query = """
+    SELECT c.id, c.title, c.created_at,
+           COUNT(m.id) as message_count
+    FROM conversations c
+    LEFT JOIN messages m ON c.id = m.conversation_id
+    WHERE c.user_id = (SELECT id FROM users WHERE google_id = %s)
+    GROUP BY c.id, c.title, c.created_at
+    ORDER BY c.created_at DESC
+    """
+    return execute_query(query, (google_id,)) or []
+
+def delete_conversation(conversation_id: str, google_id: str):
+    """Delete a conversation and all its messages"""
+    # Verify user owns the conversation
+    verify_query = """
+    SELECT 1 FROM conversations c
+    WHERE c.id = %s
+    AND c.user_id = (SELECT id FROM users WHERE google_id = %s)
+    """
+    result = execute_query(verify_query, (conversation_id, google_id))
+    if not result:
+        raise ValueError("Conversation not found or access denied")
+
+    # Delete messages first, then conversation
+    delete_messages_query = "DELETE FROM messages WHERE conversation_id = %s"
+    delete_conv_query = "DELETE FROM conversations WHERE id = %s"
+
+    execute_query(delete_messages_query, (conversation_id,), fetch=False)
+    execute_query(delete_conv_query, (conversation_id,), fetch=False)
+
+def update_conversation_title(conversation_id: str, google_id: str, title: str):
+    """Update conversation title"""
+    # Verify user owns the conversation
+    verify_query = """
+    SELECT 1 FROM conversations c
+    WHERE c.id = %s
+    AND c.user_id = (SELECT id FROM users WHERE google_id = %s)
+    """
+    result = execute_query(verify_query, (conversation_id, google_id))
+    if not result:
+        raise ValueError("Conversation not found or access denied")
+
+    update_query = "UPDATE conversations SET title = %s WHERE id = %s"
+    execute_query(update_query, (title, conversation_id), fetch=False)
 
 def verify_google_token(google_access_token: str) -> Optional[dict]:
     """
