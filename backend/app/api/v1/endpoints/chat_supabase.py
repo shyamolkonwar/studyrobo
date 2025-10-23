@@ -1,51 +1,64 @@
 """
 Enhanced chat endpoint with database integration
-Accepts Google OAuth tokens and user IDs for secure, personalized conversations
+Uses Supabase JWT authentication for secure, personalized conversations
 """
 
-from fastapi import APIRouter, Header, HTTPException
-from typing import Optional, List, Dict, Any
+from fastapi import APIRouter, HTTPException, Depends
+from typing import List, Dict, Any
 from app.models.schemas import ChatRequest, ChatResponse
 from app.core.enhanced_llm_wrapper_supabase import get_llm_response_with_supabase
-from app.core.db_client import get_user_by_google_id, create_user, get_messages, add_message
+from app.core.db_client import get_messages, add_message
+from app.api.v1.endpoints.auth.google import verify_supabase_token
 
 router = APIRouter()
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(
     request: ChatRequest,
-    x_google_token: Optional[str] = Header(None, description="Google OAuth access token"),
-    x_user_id: Optional[str] = Header(None, description="User ID from database")
+    user: Dict[str, Any] = Depends(verify_supabase_token)
 ):
     """
-    Enhanced chat endpoint that accepts Google OAuth tokens and user IDs.
+    Enhanced chat endpoint that uses Supabase JWT authentication.
 
     This endpoint:
-    - Accepts Google access tokens from the frontend
-    - Accepts user IDs from database
+    - Verifies Supabase JWT tokens
+    - Gets user information from verified token
     - Provides personalized AI responses
     - Stores conversation history in database
     - Enables secure tool execution with user context
     """
     try:
-        # Validate required headers
-        if not x_google_token:
+        # Get user information from verified token
+        supabase_user_id = user["user_id"]
+        google_id = user["google_id"]
+
+        if not google_id:
             raise HTTPException(
-                status_code=401,
-                detail="Missing Google OAuth token. Please ensure you're logged in with Google."
+                status_code=400,
+                detail="Google ID not found. Please ensure you logged in with Google."
             )
 
-        if not x_user_id:
+        # Get our internal user ID from Google ID
+        from app.core.db_client import get_user_by_google_id
+        db_user = get_user_by_google_id(google_id)
+
+        if not db_user:
             raise HTTPException(
-                status_code=401,
-                detail="Missing user ID. Please ensure you're authenticated."
+                status_code=404,
+                detail="User not found in database. Please sync your account first."
             )
 
-        # Clean the token (remove "Bearer " prefix if present)
-        google_token = x_google_token.replace("Bearer ", "").strip()
+        user_id = db_user["id"]
 
-        # Get user ID as int
-        user_id = int(x_user_id)
+        # Get Google access token for tools
+        try:
+            from app.api.v1.endpoints.auth.google import get_google_tokens
+            # We need to get the token for this user
+            # Since get_google_tokens is an endpoint, we'll access the token store directly
+            from app.tools.email_tools import token_store
+            google_token = token_store.get(google_id, {}).get("access_token")
+        except:
+            google_token = None
 
         # Add user message to history
         add_message(user_id, 'user', request.message)
@@ -54,7 +67,7 @@ async def chat_endpoint(
         reply = await get_llm_response_with_supabase(
             message=request.message,
             google_access_token=google_token,
-            user_id=str(user_id)  # Pass as str for compatibility
+            user_id=str(user_id)
         )
 
         # Add AI message to history
@@ -72,19 +85,31 @@ async def chat_endpoint(
 
 @router.get("/chat/messages")
 async def get_chat_messages(
-    x_user_id: Optional[str] = Header(None, description="User ID from database")
+    user: Dict[str, Any] = Depends(verify_supabase_token)
 ) -> List[Dict[str, Any]]:
     """
-    Get chat messages for a user.
+    Get chat messages for the authenticated user.
     """
     try:
-        if not x_user_id:
+        google_id = user["google_id"]
+
+        if not google_id:
             raise HTTPException(
-                status_code=401,
-                detail="Missing user ID."
+                status_code=400,
+                detail="Google ID not found. Please ensure you logged in with Google."
             )
 
-        user_id = int(x_user_id)
+        # Get our internal user ID from Google ID
+        from app.core.db_client import get_user_by_google_id
+        db_user = get_user_by_google_id(google_id)
+
+        if not db_user:
+            raise HTTPException(
+                status_code=404,
+                detail="User not found in database. Please sync your account first."
+            )
+
+        user_id = db_user["id"]
         messages = get_messages(user_id)
         return messages
 

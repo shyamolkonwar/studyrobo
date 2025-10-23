@@ -1,153 +1,147 @@
-import os
-import json
-import urllib.parse
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import RedirectResponse
-from app.tools.email_tools import token_store
+from fastapi import APIRouter, HTTPException, Header, Depends
+from app.core.supabase_client import supabase
+from app.core.db_client import get_user_by_google_id, create_user
 
 router = APIRouter()
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 
-@router.get("/google")
-async def google_login():
+async def verify_supabase_token(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
     """
-    Redirect user to Google OAuth 2.0 authorization page.
+    Verify Supabase JWT token and return user information.
+
+    Args:
+        authorization: Bearer token from Authorization header
+
+    Returns:
+        Dict containing user information
+
+    Raises:
+        HTTPException: If token is invalid or missing
     """
-    if not GOOGLE_CLIENT_ID:
-        raise HTTPException(status_code=500, detail="Google OAuth not configured")
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization header missing")
 
-    # Construct the authorization URL
-    redirect_uri = "http://localhost:3000/auth/google/callback"
-    scopes = [
-        "https://www.googleapis.com/auth/gmail.readonly",
-        "https://www.googleapis.com/auth/gmail.compose",
-        "https://www.googleapis.com/auth/spreadsheets.readonly"
-    ]
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid authorization format")
 
-    auth_url = (
-        "https://accounts.google.com/o/oauth2/v2/auth?"
-        f"client_id={GOOGLE_CLIENT_ID}"
-        f"&redirect_uri={urllib.parse.quote_plus(redirect_uri)}"
-        f"&response_type=code"
-        f"&scope={' '.join(scopes)}"
-        f"&access_type=offline"
-        f"&prompt=consent"
-    )
-
-    return RedirectResponse(url=auth_url)
-
-@router.get("/google/callback")
-async def google_callback(code: Optional[str] = None, error: Optional[str] = None):
-    """
-    Handle Google OAuth callback and exchange code for tokens.
-    """
-    if error:
-        raise HTTPException(status_code=400, detail=f"Google OAuth error: {error}")
-
-    if not code:
-        raise HTTPException(status_code=400, detail="Authorization code not provided")
+    token = authorization.replace("Bearer ", "")
 
     try:
-        # Exchange authorization code for tokens
-        import requests
-        token_url = "https://oauth2.googleapis.com/token"
-        data = {
-            "client_id": GOOGLE_CLIENT_ID,
-            "client_secret": GOOGLE_CLIENT_SECRET,
-            "code": code,
-            "grant_type": "authorization_code",
-            "redirect_uri": "http://localhost:3000/auth/google/callback"
+        # Verify the JWT token with Supabase
+        user = supabase.auth.get_user(token)
+        if not user or not user.user:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        return {
+            "user_id": user.user.id,
+            "email": user.user.email,
+            "google_id": user.user.user_metadata.get("provider_id") if user.user.user_metadata else None
         }
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Token verification failed: {str(e)}")
 
-        response = requests.post(token_url, data=data)
-        token_data = response.json()
+@router.get("/me")
+async def get_current_user(user: Dict[str, Any] = Depends(verify_supabase_token)):
+    """
+    Get current authenticated user information.
+    """
+    return {
+        "user_id": user["user_id"],
+        "email": user["email"],
+        "google_id": user["google_id"]
+    }
 
-        if "error" in token_data:
-            raise HTTPException(status_code=400, detail=f"Token exchange failed: {token_data['error']}")
+@router.post("/sync-user")
+async def sync_user_with_database(user: Dict[str, Any] = Depends(verify_supabase_token)):
+    """
+    Sync Supabase user with our custom database.
+    Creates user record if it doesn't exist.
+    """
+    try:
+        google_id = user["google_id"]
+        email = user["email"]
 
-        # Store tokens (in production, this should be encrypted and stored securely)
-        access_token = token_data.get("access_token")
-        refresh_token = token_data.get("refresh_token")
+        if not google_id:
+            raise HTTPException(status_code=400, detail="Google ID not found in user metadata")
 
-        # For demo purposes, store in memory with a simple user ID
-        user_id = "default_user"
-        token_store[user_id] = {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "expires_in": token_data.get("expires_in", 3600),
-            "created_at": "2024-01-01T00:00:00Z"  # Fixed timestamp for demo
-        }
+        # Check if user exists in our database
+        existing_user = get_user_by_google_id(google_id)
 
-        return RedirectResponse(url=f"http://localhost:3000/auth/success?user_id={user_id}")
+        if not existing_user:
+            # Create new user
+            db_user = create_user(google_id, email, email.split("@")[0])  # Use email prefix as name
+            return {
+                "message": "User created successfully",
+                "user_id": db_user["id"],
+                "google_id": google_id
+            }
+        else:
+            return {
+                "message": "User already exists",
+                "user_id": existing_user["id"],
+                "google_id": google_id
+            }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Token exchange failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to sync user: {str(e)}")
 
-@router.get("/tokens/{user_id}")
-async def get_tokens(user_id: str):
+@router.post("/google-tokens")
+async def store_google_tokens(
+    token_data: Dict[str, Any],
+    user: Dict[str, Any] = Depends(verify_supabase_token)
+):
     """
-    Retrieve stored tokens for a user (for testing/demo purposes).
-
-    Args:
-        user_id (str): User identifier
-
-    Returns:
-        Dict[str, Any]: Token information
+    Store Google OAuth tokens for a user.
+    This should be called after successful Google OAuth in the frontend.
     """
-    tokens = token_store.get(user_id)
-    if not tokens:
-        raise HTTPException(status_code=404, detail="Tokens not found for user")
+    try:
+        # For now, store in a simple in-memory store (replace with database storage)
+        from app.tools.email_tools import token_store
 
-    return {
-        "user_id": user_id,
-        "tokens": tokens,
-        "status": "active"
-    }
+        google_id = user["google_id"]
+        if not google_id:
+            raise HTTPException(status_code=400, detail="Google ID not found")
 
-@router.delete("/tokens/{user_id}")
-async def revoke_tokens(user_id: str):
-    """
-    Revoke and remove stored tokens for a user.
-
-    Args:
-        user_id (str): User identifier
-
-    Returns:
-        Dict[str, Any]: Revocation status
-    """
-    if user_id in token_store:
-        del token_store[user_id]
-        return {
-            "message": f"Tokens revoked for user {user_id}",
-            "status": "revoked"
-        }
-    else:
-        raise HTTPException(status_code=404, detail="Tokens not found for user")
-
-@router.get("/check/{user_id}")
-async def check_auth_status(user_id: str):
-    """
-    Check authentication status for a user.
-
-    Args:
-        user_id (str): User identifier
-
-    Returns:
-        Dict[str, Any]: Authentication status
-    """
-    tokens = token_store.get(user_id)
-    if not tokens:
-        return {
-            "authenticated": False,
-            "user_id": user_id,
-            "message": "No tokens found"
+        # Store tokens with Google ID as key
+        token_store[google_id] = {
+            "access_token": token_data.get("access_token"),
+            "refresh_token": token_data.get("refresh_token"),
+            "expires_in": token_data.get("expires_in", 3600),
+            "created_at": "2024-01-01T00:00:00Z"  # Should be current timestamp
         }
 
-    # In production, you would validate the token with Google here
-    return {
-        "authenticated": True,
-        "user_id": user_id,
-        "message": "Authentication valid"
-    }
+        return {"message": "Tokens stored successfully"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to store tokens: {str(e)}")
+
+@router.get("/google-tokens")
+async def get_google_tokens(user: Dict[str, Any] = Depends(verify_supabase_token)):
+    """
+    Get Google OAuth tokens for the authenticated user.
+    """
+    try:
+        from app.tools.email_tools import token_store
+
+        google_id = user["google_id"]
+        if not google_id:
+            raise HTTPException(status_code=400, detail="Google ID not found")
+
+        tokens = token_store.get(google_id)
+        if not tokens:
+            raise HTTPException(status_code=404, detail="Tokens not found")
+
+        return {
+            "access_token": tokens.get("access_token"),
+            "expires_in": tokens.get("expires_in")
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve tokens: {str(e)}")
+
+@router.get("/health")
+async def auth_health_check():
+    """Health check for auth service."""
+    return {"status": "healthy", "service": "auth"}
