@@ -63,6 +63,25 @@ export default function ChatPage() {
         return;
       }
       setUser(session.user);
+
+      // Check if user has Gmail access
+      try {
+        const tokensResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/google-tokens`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+        });
+
+        if (tokensResponse.status === 404) {
+          // User needs Gmail OAuth - redirect to login for Gmail setup
+          alert('Gmail access required. Please connect your Gmail account.');
+          router.push('/auth/login');
+          return;
+        }
+      } catch (error) {
+        console.error('Error checking Gmail tokens:', error);
+      }
     };
 
     checkUser();
@@ -86,7 +105,9 @@ export default function ChatPage() {
 
   const loadMessages = async () => {
     try {
-      const session = await supabase.auth.getSession();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
+
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/conversations/${conversationId}/messages`, {
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
@@ -115,8 +136,8 @@ export default function ChatPage() {
     if (!inputText.trim() || !user) return;
 
     // Get session
-    const { data: { session } } = await supabase.auth.refreshSession();
-    if (!session) {
+    const { data: { session }, error } = await supabase.auth.refreshSession();
+    if (!session || error) {
       alert("Session expired. Please log in again.");
       router.push('/auth/login');
       return;
@@ -135,7 +156,7 @@ export default function ChatPage() {
     setIsLoading(true);
 
     try {
-      // Send to backend
+      // Send to backend (tokens are now retrieved from secure database storage)
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/chat`, {
         method: 'POST',
         headers: {

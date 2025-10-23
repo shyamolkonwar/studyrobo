@@ -85,15 +85,15 @@ async def execute_tool(tool_name: str, tool_args: Dict[str, Any], google_access_
                 course_name=tool_args.get("course_name")
             )
         elif tool_name == "get_unread_emails":
-            # Now requires google_access_token instead of user_id
-            if not google_access_token:
+            # Now uses stored refresh token from database
+            if not user_id:
                 return {
                     "success": False,
-                    "error": "Google access token is required",
-                    "message": "Please ensure you're logged in with Google to access emails"
+                    "error": "User authentication required",
+                    "message": "Please log in to access email functionality."
                 }
             return await get_unread_emails(
-                google_access_token=google_access_token,
+                user_id=user_id,
                 max_results=tool_args.get("max_results", 10)
             )
         elif tool_name == "draft_email":
@@ -102,7 +102,7 @@ async def execute_tool(tool_name: str, tool_args: Dict[str, Any], google_access_
                 return {
                     "success": False,
                     "error": "Google access token is required",
-                    "message": "Please ensure you're logged in with Google to draft emails"
+                    "message": "To draft an email, I'll need your Google OAuth access token. Could you please ensure that I have the necessary permissions to access your Gmail account?"
                 }
             return await draft_email(
                 google_access_token=google_access_token,
@@ -223,8 +223,16 @@ async def get_llm_response_with_supabase(
         if assistant_message.get('tool_calls') and settings.LLM_PROVIDER == "openai":
             tool_results = []
             for tool_call in assistant_message['tool_calls']:
-                tool_name = tool_call['function']['name']
-                tool_args = json.loads(tool_call['function']['arguments'])
+                # Handle both dict and object formats for backward compatibility
+                if isinstance(tool_call, dict):
+                    tool_name = tool_call['function']['name']
+                    tool_args = json.loads(tool_call['function']['arguments'])
+                    tool_call_id = tool_call['id']
+                else:
+                    # New OpenAI API format - tool_call is an object
+                    tool_name = tool_call.function.name
+                    tool_args = json.loads(tool_call.function.arguments)
+                    tool_call_id = tool_call.id
 
                 # Execute the tool with additional parameters
                 tool_result = await execute_tool(
@@ -235,7 +243,7 @@ async def get_llm_response_with_supabase(
                 )
 
                 tool_results.append({
-                    "tool_call_id": tool_call['id'],
+                    "tool_call_id": tool_call_id,
                     "tool_name": tool_name,
                     "tool_result": tool_result
                 })
@@ -243,13 +251,21 @@ async def get_llm_response_with_supabase(
                 # Create tool result message
                 tool_message = {
                     "role": "tool",
-                    "tool_call_id": tool_call['id'],
+                    "tool_call_id": tool_call_id,
                     "name": tool_name,
                     "content": json.dumps(tool_result)
                 }
 
                 # Send tool result back to LLM for final response
-                final_messages = messages + [assistant_message, tool_message]
+                # Ensure proper message structure for OpenAI API
+                final_messages = messages + [
+                    {
+                        "role": "assistant",
+                        "content": assistant_message.get("content"),
+                        "tool_calls": assistant_message.get("tool_calls")
+                    },
+                    tool_message
+                ]
                 final_response = await llm_provider.create_completion(
                     messages=final_messages,
                     max_tokens=800,

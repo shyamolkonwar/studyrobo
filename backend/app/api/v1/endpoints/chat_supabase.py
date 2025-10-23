@@ -3,7 +3,7 @@ Enhanced chat endpoint with database integration
 Uses Supabase JWT authentication for secure, personalized conversations
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
 from typing import List, Dict, Any
 from app.models.schemas import ChatRequest, ChatResponse
 from app.core.enhanced_llm_wrapper_supabase import get_llm_response_with_supabase
@@ -44,33 +44,53 @@ async def chat_endpoint(
 
         if not db_user:
             # Create user if they don't exist
-            user_id = create_user(google_id, user["email"], user["email"].split("@")[0])["id"]
+            user_id = create_user(google_id, user["email"], user["email"].split("@")[0])
         else:
             user_id = db_user["id"]
 
-        # Get Google access token for tools
-        try:
-            from app.api.v1.endpoints.auth.google import get_google_tokens
-            # We need to get the token for this user
-            # Since get_google_tokens is an endpoint, we'll access the token store directly
-            from app.tools.email_tools import token_store
-            google_token = token_store.get(google_id, {}).get("access_token")
-        except:
-            google_token = None
+        # Google tokens are now retrieved from the secure database storage
 
-        # Add user message to history (support both old and new chat systems)
+        # Add user message to history (new conversation-based system)
         if request.conversation_id:
-            # New conversation-based system
+            # New conversation-based system - only store messages with conversation_id
             add_message_to_conversation(request.conversation_id, 'user', request.message)
         else:
-            # Legacy system for backwards compatibility
-            add_message(user_id, 'user', request.message)
+            # Legacy message system for backward compatibility
+            # Try to use in-memory conversation store
+            try:
+                from app.api.v1.endpoints.conversations import _conversations_store
+
+                # Find or create conversation for this user
+                user_conversations = [
+                    conv_id for conv_id, conv_data in _conversations_store.items()
+                    if conv_data['user_google_id'] == user["google_id"]
+                ]
+
+                if user_conversations:
+                    # Use most recent conversation
+                    conversation_id = user_conversations[0]
+                    add_message_to_conversation(conversation_id, 'user', request.message)
+                else:
+                    # Create new conversation and add message
+                    import uuid
+                    conversation_id = str(uuid.uuid4())
+                    _conversations_store[conversation_id] = {
+                        'user_google_id': user["google_id"],
+                        'title': 'Chat',
+                        'message_count': 0,
+                        'created_at': 'now()'
+                    }
+                    add_message_to_conversation(conversation_id, 'user', request.message)
+            except Exception as e:
+                # Fallback to old system if conversation system fails
+                # Use the integer user_id for message storage
+                add_message(int(user_id), 'user', request.message)
 
         # Get AI response with user context
         reply = await get_llm_response_with_supabase(
             message=request.message,
-            google_access_token=google_token,
-            user_id=str(user_id),
+            google_access_token=None,  # Tokens are now retrieved from secure database storage
+            user_id=user["google_id"],  # Use Google ID (UUID) for database queries
             conversation_id=request.conversation_id
         )
 
@@ -80,7 +100,8 @@ async def chat_endpoint(
             add_message_to_conversation(request.conversation_id, 'ai', reply)
         else:
             # Legacy system for backwards compatibility
-            add_message(user_id, 'ai', reply)
+            # Always use integer user_id for message storage
+            add_message(int(user_id), 'ai', reply)
 
         return ChatResponse(reply=reply)
 
@@ -114,7 +135,7 @@ async def get_chat_messages(
 
         if not db_user:
             # Create user if they don't exist
-            user_id = create_user(google_id, user["email"], user["email"].split("@")[0])["id"]
+            user_id = create_user(google_id, user["email"], user["email"].split("@")[0])
         else:
             user_id = db_user["id"]
         messages = get_messages(user_id)

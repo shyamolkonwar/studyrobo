@@ -10,9 +10,9 @@ if settings.OPENAI_API_KEY and settings.OPENAI_API_KEY != "your_openai_api_key_h
     client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
 async def get_llm_response(message: str) -> str:
-    # Mock response if no API key is configured
+    # Require API key for production - no mock responses
     if not client:
-        return f"Hi! I received your message: '{message}'. This is a mock response since no OpenAI API key is configured. Please add your OpenAI API key to the backend/.env file to get real AI responses."
+        raise ValueError("No OpenAI API key configured. Please add your OpenAI API key to the backend/.env file.")
 
     try:
         # Check if the message might be asking for study materials
@@ -67,9 +67,9 @@ Please provide a comprehensive answer based on the study materials above. If the
 
 async def get_llm_response_with_functions(message: str) -> str:
     """Advanced version with proper OpenAI function calling."""
-    # Mock response if no API key is configured
+    # Require API key for production - no mock responses
     if not client:
-        return f"Hi! I received your message: '{message}'. This is a mock response since no OpenAI API key is configured. Please add your OpenAI API key to the backend/.env file to get real AI responses."
+        raise ValueError("No OpenAI API key configured. Please add your OpenAI API key to the backend/.env file.")
 
     try:
         response = await client.chat.completions.create(

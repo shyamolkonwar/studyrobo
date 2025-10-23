@@ -33,9 +33,11 @@ def execute_query(query: str, params: tuple = None, fetch: bool = True) -> Optio
     with get_db_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cursor:
             cursor.execute(query, params)
+            result = None
             if fetch:
-                return [dict(row) for row in cursor.fetchall()]
+                result = [dict(row) for row in cursor.fetchall()]
             conn.commit()
+            return result
     return None
 
 def get_user_by_google_id(google_id: str) -> Optional[Dict[str, Any]]:
@@ -47,7 +49,7 @@ def get_user_by_google_id(google_id: str) -> Optional[Dict[str, Any]]:
 def create_user(google_id: str, email: str, name: str) -> int:
     """Create a new user and return user_id"""
     query = "INSERT INTO users (google_id, email, name) VALUES (%s, %s, %s) RETURNING id"
-    result = execute_query(query, (google_id, email, name))
+    result = execute_query(query, (google_id, email, name), fetch=False)
     return result[0]['id'] if result else None
 
 def get_messages(user_id: int) -> List[Dict[str, Any]]:
@@ -55,10 +57,22 @@ def get_messages(user_id: int) -> List[Dict[str, Any]]:
     query = "SELECT role, content, created_at FROM messages WHERE user_id = %s ORDER BY created_at"
     return execute_query(query, (user_id,)) or []
 
-def get_messages_by_conversation(conversation_id: str) -> List[Dict[str, Any]]:
-    """Get all messages for a specific conversation"""
-    query = "SELECT role, content, created_at FROM messages WHERE conversation_id = %s ORDER BY created_at"
-    return execute_query(query, (conversation_id,)) or []
+def get_messages_by_conversation(conversation_id: str, google_id: str = None) -> List[Dict[str, Any]]:
+    """Get all messages for a specific conversation, optionally filtered by user ownership"""
+    if google_id:
+        # Check ownership and get messages
+        query = """
+        SELECT m.id, m.role, m.content, m.created_at::text as created_at
+        FROM messages m
+        JOIN conversations c ON m.conversation_id = c.id
+        WHERE m.conversation_id = %s AND c.user_id = (SELECT id FROM users WHERE google_id = %s)
+        ORDER BY m.created_at
+        """
+        return execute_query(query, (conversation_id, google_id)) or []
+    else:
+        # Legacy behavior - get messages without ownership check
+        query = "SELECT role, content, created_at FROM messages WHERE conversation_id = %s ORDER BY created_at"
+        return execute_query(query, (conversation_id,)) or []
 
 def add_message(user_id: int, role: str, content: str):
     """Add a message for a user (legacy function for compatibility)"""
@@ -116,7 +130,7 @@ def create_conversation(google_id: str, title: str = "New Chat") -> str:
 def get_user_conversations(google_id: str) -> List[Dict[str, Any]]:
     """Get all conversations for a user"""
     query = """
-    SELECT c.id, c.title, c.created_at,
+    SELECT c.id, c.title, c.created_at::text as created_at,
            COUNT(m.id) as message_count
     FROM conversations c
     LEFT JOIN messages m ON c.id = m.conversation_id
@@ -162,12 +176,28 @@ def update_conversation_title(conversation_id: str, google_id: str, title: str):
 
 def verify_google_token(google_access_token: str) -> Optional[dict]:
     """
-    Placeholder for Google token verification
-    In production, verify with Google's API
+    Verify Google OAuth token with Google's API
+    In production, this validates the token and extracts user information
     """
     try:
-        # Placeholder - implement actual verification
-        return {"valid": True, "user_id": "temp_user_id"}
+        import requests
+
+        # Verify token with Google's API
+        response = requests.get(
+            f"https://www.googleapis.com/oauth2/v2/userinfo?access_token={google_access_token}"
+        )
+
+        if response.status_code == 200:
+            user_data = response.json()
+            return {
+                "valid": True,
+                "user_id": user_data.get("id"),
+                "email": user_data.get("email"),
+                "name": user_data.get("name")
+            }
+        else:
+            return {"valid": False, "error": "Invalid token"}
+
     except Exception as e:
         print(f"Token verification error: {e}")
-        return None
+        return {"valid": False, "error": str(e)}

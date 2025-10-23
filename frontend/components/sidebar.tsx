@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 
 interface Conversation {
   id: string;
@@ -13,10 +14,29 @@ interface Conversation {
   message_count: number;
 }
 
+interface AppConnection {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  connected: boolean;
+  connecting: boolean;
+}
+
 export default function Sidebar({ currentConversationId }: { currentConversationId?: string }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [user, setUser] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [apps, setApps] = useState<AppConnection[]>([
+    {
+      id: 'gmail',
+      name: 'Gmail',
+      description: 'Access your emails and manage your inbox',
+      icon: '📧',
+      connected: false,
+      connecting: false,
+    },
+  ]);
   const router = useRouter();
 
   useEffect(() => {
@@ -108,13 +128,91 @@ export default function Sidebar({ currentConversationId }: { currentConversation
     }
   };
 
+  const checkAppConnections = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
+
+      // Check Gmail connection
+      const tokensResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/google-tokens`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+      });
+
+      setApps(prevApps =>
+        prevApps.map(app => ({
+          ...app,
+          connected: app.id === 'gmail' ? tokensResponse.ok : app.connected,
+        }))
+      );
+    } catch (error) {
+      console.error('Error checking app connections:', error);
+    }
+  };
+
+  const connectApp = async (appId: string) => {
+    if (appId === 'gmail') {
+      try {
+        setApps(prevApps =>
+          prevApps.map(app =>
+            app.id === appId ? { ...app, connecting: true } : app
+          )
+        );
+
+        // Use Supabase OAuth with Gmail scopes and offline access
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: {
+            // Ask for the Gmail scopes
+            scopes: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose',
+            // CRITICAL: Ask for offline access to get the Refresh Token
+            queryParams: {
+              access_type: 'offline',
+              prompt: 'consent' // Forces Google to show the consent screen again
+            }
+          }
+        });
+
+        if (error) {
+          alert('Failed to initiate Gmail connection. Please try again.');
+          setApps(prevApps =>
+            prevApps.map(app =>
+              app.id === appId ? { ...app, connecting: false } : app
+            )
+          );
+        }
+        // Note: No need to handle success here - the auth state change listener will handle it
+      } catch (error) {
+        console.error('Error connecting Gmail:', error);
+        alert('Failed to connect Gmail. Please try again.');
+        setApps(prevApps =>
+          prevApps.map(app =>
+            app.id === appId ? { ...app, connecting: false } : app
+          )
+        );
+      }
+    }
+  };
+
   if (!user) {
     return null;
   }
 
   return (
     <div className="w-64 h-full bg-card border-r border-border flex flex-col">
-      <div className="p-4 border-b border-border">
+      <div className="p-4 border-b border-border space-y-2">
+        <Button
+          onClick={() => router.push('/')}
+          className="w-full flex items-center gap-2"
+          variant="outline"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+          </svg>
+          Home
+        </Button>
         <Button
           onClick={createNewConversation}
           className="w-full flex items-center gap-2"
@@ -185,7 +283,65 @@ export default function Sidebar({ currentConversationId }: { currentConversation
         )}
       </div>
 
-      <div className="p-4 border-t border-border">
+      <div className="p-4 border-t border-border space-y-2">
+        <Dialog>
+          <DialogTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={checkAppConnections}
+            >
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+              </svg>
+              Connect Apps
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Connect Your Apps</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              {apps.map((app) => (
+                <Card key={app.id} className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      <span className="text-2xl">{app.icon}</span>
+                      <div>
+                        <h3 className="font-medium">{app.name}</h3>
+                        <p className="text-sm text-muted-foreground">{app.description}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      {app.connected && (
+                        <span className="text-sm text-green-600 font-medium">Connected</span>
+                      )}
+                      <Button
+                        size="sm"
+                        variant={app.connected ? "outline" : "default"}
+                        disabled={app.connecting}
+                        onClick={() => connectApp(app.id)}
+                      >
+                        {app.connecting ? (
+                          <>
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current mr-2"></div>
+                            Connecting...
+                          </>
+                        ) : app.connected ? (
+                          'Reconnect'
+                        ) : (
+                          'Connect'
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </DialogContent>
+        </Dialog>
+
         <Button
           variant="outline"
           size="sm"

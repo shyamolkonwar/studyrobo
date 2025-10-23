@@ -9,6 +9,7 @@ import aiofiles
 
 # Simple in-memory storage for demo (in production, use a proper database)
 token_store = {}
+_oauth_states = {}  # Store OAuth state parameters for security
 
 async def get_unread_emails(user_id: str = "default") -> Dict[str, Any]:
     """
@@ -157,14 +158,21 @@ async def draft_email(to: str, subject: str, body: str, user_id: str = "default"
                 "subject": subject,
                 "user_id": user_id
             }
-
-        except Exception as e:
+        else:
             return {
                 "success": False,
-                "error": str(e),
+                "error": "Invalid token data. Missing refresh_token or access_token.",
                 "draft_id": None,
-                "message": f"Error creating draft: {str(e)}"
+                "message": "Authentication tokens are invalid"
             }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "draft_id": None,
+            "message": f"Error creating draft: {str(e)}"
+        }
 
 def create_message(to: str, subject: str, body: str) -> str:
     """Create a raw email message for Gmail API."""

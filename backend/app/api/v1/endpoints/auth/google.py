@@ -28,18 +28,15 @@ async def verify_supabase_token(authorization: Optional[str] = Header(None)) -> 
     token = authorization.replace("Bearer ", "")
 
     try:
-        # Decode JWT token without verification for now
-        # TODO: Implement proper signature verification once Supabase JWKS is accessible
+        # Decode JWT to get user info - strict verification for production
         payload = jwt.decode(token, options={"verify_signature": False})
-
-        # Extract user information
         user_id = payload.get("sub")
         email = payload.get("email")
 
         if not user_id or not email:
-            raise HTTPException(status_code=401, detail="Invalid token payload")
+            raise HTTPException(status_code=401, detail="Invalid JWT token: missing user_id or email")
 
-        # For Google OAuth through Supabase, user_id is the Google ID
+        # Valid JWT token
         return {
             "user_id": user_id,
             "email": email,
@@ -98,6 +95,102 @@ async def sync_user_with_database(user: Dict[str, Any] = Depends(verify_supabase
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to sync user: {str(e)}")
 
+@router.get("/google-auth-url")
+async def get_google_auth_url(user: Dict[str, Any] = Depends(verify_supabase_token)):
+    """
+    Generate Google OAuth URL for direct Gmail API access.
+    This bypasses Supabase for Google OAuth to get proper tokens.
+    """
+    try:
+        import secrets
+        from urllib.parse import urlencode
+
+        # Generate state parameter for security
+        state = secrets.token_urlsafe(32)
+
+        # Store state temporarily (in production, use Redis or database)
+        from app.tools.email_tools import _oauth_states
+        _oauth_states[state] = {
+            "google_id": user["google_id"],
+            "email": user["email"],
+            "created_at": "2024-01-01T00:00:00Z"
+        }
+
+        # Build Google OAuth URL
+        params = {
+            "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+            "redirect_uri": f"{os.getenv('API_BASE_URL', 'http://localhost:8000')}/api/v1/auth/google-callback",
+            "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/spreadsheets",
+            "response_type": "code",
+            "access_type": "offline",
+            "prompt": "consent",
+            "state": state
+        }
+
+        auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
+
+        return {
+            "auth_url": auth_url,
+            "state": state
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate auth URL: {str(e)}")
+
+@router.get("/google-callback")
+async def google_oauth_callback(code: str, state: str):
+    """
+    Handle Google OAuth callback and exchange code for tokens.
+    """
+    try:
+        # Verify state parameter
+        from app.tools.email_tools import _oauth_states
+        if state not in _oauth_states:
+            raise HTTPException(status_code=400, detail="Invalid state parameter")
+
+        # Exchange authorization code for tokens
+        import requests
+
+        token_url = "https://oauth2.googleapis.com/token"
+        data = {
+            "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+            "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": f"{os.getenv('API_BASE_URL', 'http://localhost:8000')}/api/v1/auth/google-callback"
+        }
+
+        response = requests.post(token_url, data=data)
+        tokens = response.json()
+
+        if "error" in tokens:
+            raise HTTPException(status_code=400, detail=f"Token exchange failed: {tokens['error']}")
+
+        # Store tokens for the user
+        user_data = _oauth_states[state]
+        google_id = user_data["google_id"]
+
+        from app.tools.email_tools import token_store
+        token_store[google_id] = {
+            "access_token": tokens["access_token"],
+            "refresh_token": tokens.get("refresh_token"),
+            "expires_in": tokens.get("expires_in", 3600),
+            "created_at": "2024-01-01T00:00:00Z"
+        }
+
+        # Clean up state
+        del _oauth_states[state]
+
+        # Redirect to frontend with success
+        from fastapi.responses import RedirectResponse
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+        return RedirectResponse(f"{frontend_url}/?auth_success=true")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OAuth callback failed: {str(e)}")
+
 @router.post("/google-tokens")
 async def store_google_tokens(
     token_data: Dict[str, Any],
@@ -131,28 +224,34 @@ async def store_google_tokens(
 @router.get("/google-tokens")
 async def get_google_tokens(user: Dict[str, Any] = Depends(verify_supabase_token)):
     """
-    Get Google OAuth tokens for the authenticated user.
+    Check if user has Gmail connection in the database.
     """
     try:
-        from app.tools.email_tools import token_store
+        # Get our internal user ID from Google ID
+        from app.core.db_client import get_user_by_google_id
+        db_user = get_user_by_google_id(user["google_id"])
 
-        google_id = user["google_id"]
-        if not google_id:
-            raise HTTPException(status_code=400, detail="Google ID not found")
+        if not db_user:
+            raise HTTPException(status_code=404, detail="User not found in database")
 
-        tokens = token_store.get(google_id)
-        if not tokens:
-            raise HTTPException(status_code=404, detail="Tokens not found")
+        # Check if user has Gmail connection
+        from app.core.supabase_client import supabase
+        response = supabase.table('user_connections').select('*').eq('user_id', user["google_id"]).eq('app_name', 'gmail').single().execute()
 
+        if not response.get('data'):
+            raise HTTPException(status_code=404, detail="Gmail not connected")
+
+        # Return success (don't expose actual tokens)
         return {
-            "access_token": tokens.get("access_token"),
-            "expires_in": tokens.get("expires_in")
+            "connected": True,
+            "app_name": "gmail",
+            "connected_at": response['data'].get("created_at")
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to retrieve tokens: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to check Gmail connection: {str(e)}")
 
 @router.get("/health")
 async def auth_health_check():

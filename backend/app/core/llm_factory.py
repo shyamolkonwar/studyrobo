@@ -270,6 +270,56 @@ class MistralProvider(LLMProvider):
     def get_model_name(self) -> str:
         return settings.MISTRAL_MODEL
 
+class OpenRouterProvider(LLMProvider):
+    """OpenRouter LLM Provider"""
+
+    def __init__(self):
+        try:
+            from openai import AsyncOpenAI
+            self.client = AsyncOpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=settings.OPENROUTER_API_KEY
+            )
+            self.available = bool(settings.OPENROUTER_API_KEY)
+        except ImportError:
+            self.client = None
+            self.available = False
+
+    async def create_completion(self, messages: List[Dict[str, Any]], **kwargs) -> Dict[str, Any]:
+        if not self.available or not self.client:
+            raise ValueError("OpenRouter client not available")
+
+        tools = kwargs.get('tools', [])
+        tool_choice = kwargs.get('tool_choice', 'auto')
+
+        # Prepare extra headers as mentioned in OpenRouter docs
+        extra_headers = {
+            "HTTP-Referer": "https://studyrobo.com",  # Optional. Site URL for rankings
+            "X-Title": "StudyRobo",  # Optional. Site title for rankings
+        }
+
+        response = await self.client.chat.completions.create(
+            model=settings.OPENROUTER_MODEL,
+            messages=messages,
+            tools=tools if tools else None,
+            tool_choice=tool_choice if tools else None,
+            max_tokens=kwargs.get('max_tokens', 1000),
+            temperature=kwargs.get('temperature', 0.3),
+            extra_headers=extra_headers
+        )
+
+        return {
+            'choices': [{
+                'message': {
+                    'content': response.choices[0].message.content,
+                    'tool_calls': response.choices[0].message.tool_calls
+                }
+            }]
+        }
+
+    def get_model_name(self) -> str:
+        return settings.OPENROUTER_MODEL
+
 class LLMFactory:
     """Factory for creating LLM providers"""
 
@@ -278,7 +328,8 @@ class LLMFactory:
             'openai': OpenAIProvider(),
             'glm': GLMProvider(),
             'gemini': GeminiProvider(),
-            'mistral': MistralProvider()
+            'mistral': MistralProvider(),
+            'openrouter': OpenRouterProvider()
         }
 
     def get_provider(self, provider_name: Optional[str] = None) -> LLMProvider:

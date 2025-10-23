@@ -5,17 +5,19 @@ load_dotenv()
 
 class Settings:
     # LLM Configuration
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")  # "openai", "glm", "gemini", or "mistral"
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")  # "openai", "glm", "gemini", "mistral", or "openrouter"
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     GLM_API_KEY: str = os.getenv("GLM_API_KEY", "")
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     MISTRAL_API_KEY: str = os.getenv("MISTRAL_API_KEY", "")
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
 
     # Model Names (configurable)
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
     GLM_MODEL: str = os.getenv("GLM_MODEL", "glm-4.5")
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
     MISTRAL_MODEL: str = os.getenv("MISTRAL_MODEL", "mistral-large-latest")
+    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat-v3.1:free")
 
     TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")
     API_V1_STR: str = "/api/v1"

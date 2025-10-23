@@ -1,0 +1,139 @@
+🤖 The Overall Concept
+
+Your backend "Agent" is the manager.
+
+The user asks the Agent to "check my email."
+
+The Agent asks the "LLM Brain" (e.g., GPT-4): "The user said 'check my email'. Which of my tools should I use?"
+
+The LLM Brain replies: "Use the get_unread_emails tool."
+
+The Agent then runs your actual Python code for get_unread_emails. This code uses the Google Token to fetch real emails from Google.
+
+The tool returns a list of emails (as JSON data).
+
+The Agent goes back to the LLM Brain: "I ran the tool and got this email data. Please turn this into a nice, human-friendly response."
+
+The LLM Brain gives the final answer, which the Agent sends to your frontend.
+
+## Phase 1: The Frontend (Next.js)
+
+This is what happens in the user's browser.
+
+1. The User's Action The user is logged in. They type "Check my unread emails" and hit send.
+
+2. The Token Before your frontend sends this message, it must get the Google Access Token that Supabase is storing.
+
+Your handleSubmit function in Next.js will call supabase.auth.getSession().
+
+This session object contains a special field called provider_token. This is the golden key. It's the Google Access Token that proves the user gave you permission to read their email.
+
+3. The API Call Your frontend fetch call to your backend (/api/v1/chat) will now send two things:
+
+The Body (JSON): { "message": "Check my unread emails" }
+
+The Header (Token): Authorization: Bearer <the_provider_token_from_supabase> (Or a custom header like X-Google-Token).
+
+## Phase 2: The Backend (FastAPI) - The First Lap
+
+This is where your FastAPI server receives the request.
+
+4. The Agent Wakes Up
+
+Your POST /api/v1/chat endpoint receives the request.
+
+It reads the user's message from the JSON body.
+
+It reads the provider_token from the Authorization header.
+
+5. The First LLM Call (The "Decision")
+
+Your agent does not call the Gmail API yet.
+
+It first asks the LLM for advice. It prepares a prompt that includes:
+
+The user's message: "Check my unread emails"
+
+A list of all your available tools. This is a description of your Python functions, not the code itself.
+
+Example: [ { "name": "get_unread_emails", "description": "Use this tool to get a list of unread emails from the user's Gmail account." }, ...other tools ]
+
+It sends this to the LLM.
+
+6. The LLM's Decision
+
+The LLM (if it's a tool-calling model) will not respond with a normal sentence.
+
+It will respond with a special, structured JSON message that says: { "tool_call": { "name": "get_unread_emails", "arguments": {} } }
+
+Your backend code must be set up to check for this tool_call object in the response.
+
+## Phase 3: The Tool (Python)
+
+Your backend now knows which tool to run.
+
+7. Executing the "Real" Function
+
+Your FastAPI code sees the tool_call for "get_unread_emails".
+
+It now runs your actual Python function, let's say run_email_tool(), from your tools/email_agent.py file.
+
+Critically, it passes the provider_token (from the header) into this function.
+
+8. The Gmail API Call
+
+Inside your run_email_tool(token) function:
+
+It uses the token to build a valid Google Credentials object.
+
+It uses those credentials to initialize the Gmail API client (build('gmail', 'v1', ...))
+
+It calls the Gmail API, for example: service.users().messages().list(userId='me', q='is:unread', maxResults=5).
+
+This returns a list of message IDs.
+
+Your code then loops over these IDs and makes another API call for each one to get the Subject, From, and Snippet.
+
+The function bundles all this data into a clean JSON list: [ { "from": "...", "subject": "...", "snippet": "..." }, ... ]
+
+This JSON list is returned to your main agent.
+
+## Phase 4: The Backend (FastAPI) - The Second Lap
+
+Your agent has the raw data. Now it needs to be polite.
+
+9. The Second LLM Call (The "Summary")
+
+Your agent is still holding the request. It does not send the raw JSON to the user.
+
+It calls the LLM again. This time, the prompt is different:
+
+It tells the LLM what tool it just ran.
+
+It provides the JSON data from the tool.
+
+It asks the LLM to create a summary.
+
+Example: "You just ran the get_unread_emails tool and got this data: [ ...email data... ]. Please formulate a human-friendly response for the user and include the full JSON data in your final answer."
+
+10. The Final JSON Response
+
+The LLM will now generate a complete response. Your FastAPI server sends this back to the Next.js frontend. This response should have two parts:
+
+The natural language summary (e.g., "You have 5 unread emails. Here are the top 3:").
+
+The structured data (the JSON list of emails).
+
+Your final API response to the frontend looks like this:
+
+JSON
+{
+  "role": "ai",
+  "content": "You have 5 unread emails. Here are the top 3:",
+  "data_type": "email_list",
+  "data": [
+    { "from": "Prof. Smith", "subject": "...", "snippet": "..." },
+    { "from": "Registrar", "subject": "...", "snippet": "..." },
+    { "from": "Hackathon", "subject": "...", "snippet": "..." }
+  ]
+}

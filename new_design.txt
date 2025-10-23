@@ -1,0 +1,67 @@
+The best way to show data is with UI Cards.
+
+When your AI agent gets information (like emails or resources), it should return structured JSON. Your Next.js frontend will then render that JSON as a list of shadcn/ui Card components inside the AI's chat bubble.
+
+Here’s the view to use for each information type:
+
+📧 1. For Emails
+
+View: Email Summary Card
+
+How: Don't show the full email. Use a shadcn/ui Card for each email.
+
+Components:
+
+CardHeader: Show the Sender (e.g., "Prof. Smith") and Subject.
+
+CardContent: Show a 1-2 line snippet of the email body.
+
+CardFooter: Include an "Open" or "Reply" button.
+
+Result: A clean, scrollable list of emails right in the chat.
+
+📚 2. For Learning Resources (Videos, Articles)
+
+View: Resource Card
+
+How: Use a horizontal card with an image.
+
+Components:
+
+Card: Use flex to put an image on the left (a video thumbnail or article-matching icon) and text on the right.
+
+CardHeader: Show the Title of the video/article.
+
+CardContent: A brief description.
+
+CardFooter: A "Watch Video" or "Read Article" link button.
+
+📈 3. For Career Insights
+
+View: Stat Cards or Key-Point List
+
+How: When the AI returns data like "average salary" or "top skills," don't just write a paragraph.
+
+Components:
+
+Use shadcn/ui Alert components to highlight key stats (e.g., "Average Salary: $120,000").
+
+Use a simple bulleted list for things like "Top Skills."
+
+This breaks the data out from the AI's text and makes it scannable.
+
+✅ 4. For Attendance or Simple Actions
+
+View: Confirmation Card or Alert
+
+How: For a simple success message, make it stand out.
+
+Components:
+
+Use an shadcn/ui Alert with a green checkmark icon.
+
+AlertTitle: "Attendance Marked!"
+
+AlertDescription: "You have been successfully marked present for CS101."
+
+This card-based approach keeps your UI clean, component-based, and perfectly adapted for both desktop and mobile.

@@ -12,21 +12,66 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build, Resource
 import aiofiles
 
-async def get_unread_emails(google_access_token: str, max_results: int = 10) -> Dict[str, Any]:
+async def get_unread_emails(user_id: str, max_results: int = 10) -> Dict[str, Any]:
     """
-    Fetch unread emails from Gmail using Google OAuth access token.
+    Fetch unread emails from Gmail using stored refresh token.
 
     Args:
-        google_access_token (str): Google OAuth access token from Supabase auth
+        user_id (str): User ID (Google ID UUID) to look up stored tokens
         max_results (int): Maximum number of emails to fetch (default: 10)
 
     Returns:
         Dict[str, Any]: Unread emails with metadata
     """
     try:
+        # Get Supabase client to query user_connections table
+        from app.core.supabase_client import supabase
+
+        # Query the user's Gmail connection using Google ID (UUID)
+        response = supabase.table('user_connections').select('*').eq('user_id', user_id).eq('app_name', 'gmail').single().execute()
+
+        if not response.get('data'):
+            return {
+                "success": False,
+                "error": "Gmail not connected",
+                "message": "Please connect your Gmail account first.",
+                "emails": [],
+                "auth_required": True
+            }
+
+        connection = response['data']
+
+        # Get the refresh token (simplified version - in production this would be decrypted)
+        refresh_token = connection['refresh_token']
+
+        # Exchange refresh token for access token
+        import requests
+
+        token_url = "https://oauth2.googleapis.com/token"
+        data = {
+            "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+            "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token"
+        }
+
+        token_response = requests.post(token_url, data=data)
+        token_data = token_response.json()
+
+        if "error" in token_data:
+            return {
+                "success": False,
+                "error": f"Token refresh failed: {token_data['error']}",
+                "message": "Failed to refresh Gmail access token. Please reconnect your account.",
+                "emails": [],
+                "auth_required": True
+            }
+
+        access_token = token_data["access_token"]
+
         # Create credentials from the access token
         creds = Credentials(
-            token=google_access_token,
+            token=access_token,
             token_uri="https://oauth2.googleapis.com/token",
             client_id=os.getenv("GOOGLE_CLIENT_ID"),
             client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
@@ -244,17 +289,13 @@ get_unread_emails_tool = {
         "parameters": {
             "type": "object",
             "properties": {
-                "google_access_token": {
-                    "type": "string",
-                    "description": "The user's Google OAuth access token obtained from Supabase authentication"
-                },
                 "max_results": {
                     "type": "integer",
                     "description": "Maximum number of emails to fetch (default: 10)",
                     "default": 10
                 }
             },
-            "required": ["google_access_token"]
+            "required": []
         }
     }
 }
@@ -267,10 +308,6 @@ draft_email_tool = {
         "parameters": {
             "type": "object",
             "properties": {
-                "google_access_token": {
-                    "type": "string",
-                    "description": "The user's Google OAuth access token obtained from Supabase authentication"
-                },
                 "to": {
                     "type": "string",
                     "description": "Recipient email address"
@@ -284,7 +321,7 @@ draft_email_tool = {
                     "description": "Email body content"
                 }
             },
-            "required": ["google_access_token", "to", "subject", "body"]
+            "required": ["to", "subject", "body"]
         }
     }
 }

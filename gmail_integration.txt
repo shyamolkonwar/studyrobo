@@ -1,0 +1,192 @@
+## Phase 1: Modify Your Login Flow
+
+This is a critical first step.
+
+Go to your existing "Login with Google" button. In your supabase.auth.signInWithOAuth call, REMOVE the Gmail/Sheets scopes.
+
+Why: Your main login should only be for authentication. This ensures that users who just want to log in aren't scared away by a prompt asking to read their email.
+
+Your login code should now be simple:
+
+JavaScript
+// In your login page
+const handleLogin = async () => {
+  await supabase.auth.signInWithOAuth({
+    provider: 'google'
+    // NO scopes here!
+  });
+};
+## Phase 2: Create the "Connections" Table in Supabase
+
+Your backend needs a secure place to store the permanent Refresh Tokens.
+
+Go to your Supabase SQL Editor.
+
+Create a new table. This is the "right way" to do it, using pgsodium to encrypt the tokens.
+
+Note: For a hackathon, you could store the token in a plain text column, but it's very insecure. This guide shows the professional, secure method.
+
+SQL
+-- 1. Enable the pgsodium extension (if not already enabled)
+create extension if not exists pgsodium
+    with schema pgsodium;
+
+-- 2. Create the table to store the connections
+create table user_connections (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) not null,
+  app_name text not null, -- e.g., "gmail"
+  
+  -- This encrypted column will securely store the refresh token
+  encrypted_refresh_token bytea not null,
+  
+  -- Store an "encryption key ID" and "nonce"
+  -- This is a best practice for pgsodium
+  key_id uuid not null,
+  nonce bytea not null,
+
+  -- Ensure a user can only connect each app once
+  unique(user_id, app_name)
+);
+## Phase 3: The UI and "Connect" Action (Frontend)
+
+Now, let's build the flow you described.
+
+Add the "Connect Apps" Button: In your sidebar, above the "Logout" button, add your new shadcn/ui Button.
+
+Create the Dialog: When the button is clicked, open a shadcn/ui Dialog.
+
+Build the App Card: Inside the dialog, show a shadcn/ui Card for Gmail. It should have:
+
+An icon and the title "Gmail".
+
+A description: "Connect your Gmail account to let your mentor read, draft, and manage your emails."
+
+A "Connect" button.
+
+The "Connect" Button's onClick: This is the most important part of the frontend.
+
+When the user clicks "Connect," you will re-trigger the Google OAuth flow, but with different options.
+
+JavaScript
+// In your Gmail connect button's onClick handler
+const handleConnectGmail = async () => {
+  await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      // 1. Ask for the Gmail scopes
+      scopes: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose',
+
+      // 2. CRITICAL: Ask for offline access to get the Refresh Token
+      queryParams: {
+        access_type: 'offline',
+        prompt: 'consent' // Forces Google to show the consent screen again
+      }
+    }
+  });
+  // This will redirect the user to Google
+};
+## Phase 4: Save the Refresh Token (Frontend + Supabase Edge Function)
+
+When the user is redirected back from Google, Supabase will fire an event. We need to "catch" the new Refresh Token.
+
+Create a Supabase Edge Function:
+
+This is a secure, server-side function. Call it save-google-token.
+
+This function's job is to take a refresh_token from the user, encrypt it, and save it to your user_connections table.
+
+This is complex, but it's the only 100% secure way. Your function will use pgsodium to encrypt the token before inserting it.
+
+Listen for the Token in Next.js:
+
+In your main layout.tsx (or wherever your Supabase client is initialized), you need a listener.
+
+This listener will fire after the redirect.
+
+JavaScript
+// In your root layout or a provider component
+useEffect(() => {
+  const { data: { subscription } } = supabase.auth.onAuthStateChange(
+    async (event, session) => {
+      // Check if this is the 'SIGNED_IN' event after our OAuth flow
+      if (event === 'SIGNED_IN' && session?.provider_refresh_token) {
+
+        // WE GOT IT!
+        const refreshToken = session.provider_refresh_token;
+
+        // Don't let this token sit in the client.
+        // Immediately send it to your secure Edge Function.
+        try {
+          const { error } = await supabase.functions.invoke(
+            'save-google-token', 
+            { 
+              body: {
+                app_name: 'gmail',
+                refresh_token: refreshToken
+              }
+            }
+          );
+
+          if (error) throw error;
+
+          // Show a success toast/message!
+          console.log("Gmail connected successfully!");
+
+        } catch (error) {
+          // Show an error toast/message
+          console.error("Failed to save connection:", error);
+        }
+      }
+    }
+  );
+
+  return () => {
+    subscription.unsubscribe();
+  };
+}, [supabase]);
+## Phase 5: How Your Backend Tool Uses the Connection (FastAPI)
+
+Now, your backend get_unread_emails tool is completely different. It does not get a token from the frontend header.
+
+When the user says, "Check my email," your POST /api/v1/chat endpoint is called.
+
+Your get_unread_emails tool is triggered.
+
+Inside the tool, it must:
+
+Get the user_id (from the Supabase auth context you pass to your backend).
+
+Use the supabase-admin client to query your user_connections table.
+
+SELECT encrypted_refresh_token, key_id, nonce FROM user_connections WHERE user_id = :user_id AND app_name = 'gmail'.
+
+Decrypt the encrypted_refresh_token using pgsodium.decrypt().
+
+You now have the plain-text Refresh Token.
+
+Use the google-auth Python library to exchange this Refresh Token for a new, fresh 3600-second Access Token.
+
+Use this new Access Token to call the Gmail API.
+
+Summary of the Flow
+
+User: Clicks "Connect Apps" -> "Connect Gmail".
+
+Frontend: Calls supabase.auth.signInWithOAuth asking for offline access.
+
+Google: Redirects user back to your app.
+
+Frontend: onAuthStateChange listener fires, grabs the provider_refresh_token.
+
+Frontend: Immediately calls a Supabase Edge Function (save-google-token) with the token.
+
+Edge Function: Encrypts the token and INSERTs it into the user_connections table.
+
+Later (in Chat)...
+
+User: "Check my email."
+
+FastAPI Backend: Queries user_connections for the user's encrypted token.
+
+FastAPI Backend: Decrypts the token, gets a new Access Token from Google, and then calls the Gmail API.

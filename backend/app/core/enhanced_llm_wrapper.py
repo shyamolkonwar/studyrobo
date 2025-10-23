@@ -109,10 +109,9 @@ async def get_llm_response_with_all_tools(message: str) -> str:
     4. Executes tool calls when requested by OpenAI
     5. Formats responses appropriately
     """
-    # Mock response if no API key is configured
+    # Require API key for production - no mock responses
     if not client:
-        intent = detect_intent(message)
-        return f"Hi! I received your message: '{message}'. This appears to be about {intent}. This is a mock response since no OpenAI API key is configured. Please add your OpenAI API key to the backend/.env file to get real AI responses."
+        raise ValueError("No LLM provider available. Please configure OpenAI API key in backend/.env file.")
 
     try:
         # Detect user intent

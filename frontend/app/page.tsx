@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import Sidebar from '@/components/sidebar';
 import EmptyState from '@/components/empty-state';
 
@@ -51,10 +52,12 @@ export default function Home() {
 
   const loadConversations = async () => {
     try {
-      const session = await supabase.auth.getSession();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
+
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/conversations`, {
         headers: {
-          'Authorization': `Bearer ${session?.access_token}`,
+          'Authorization': `Bearer ${session.access_token}`,
         },
       });
 
@@ -72,14 +75,19 @@ export default function Home() {
       setIsRedirecting(true);
 
       // Create new conversation
-      const session = await supabase.auth.getSession();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        setIsRedirecting(false);
+        return;
+      }
+
       const title = prompt ? prompt.split(' ').slice(0, 5).join(' ') + '...' : 'New Chat';
 
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/conversations`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token}`,
+          'Authorization': `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ title }),
       });
@@ -106,13 +114,6 @@ export default function Home() {
     createNewChat(prompt);
   };
 
-  // If we have conversations, redirect to the most recent one
-  useEffect(() => {
-    if (conversations.length > 0 && !isRedirecting) {
-      router.push(`/chat/${conversations[0].id}`);
-    }
-  }, [conversations, router, isRedirecting]);
-
   if (!user || isRedirecting) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -121,19 +122,7 @@ export default function Home() {
     );
   }
 
-  // If we have conversations, show loading/redirecting state
-  if (conversations.length > 0) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Card className="p-8 text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Opening your chat...</p>
-        </Card>
-      </div>
-    );
-  }
-
-  // No conversations - show empty state
+  // Show conversations or empty state
   return (
     <div className="flex h-screen">
       <Sidebar />
