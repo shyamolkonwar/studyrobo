@@ -6,9 +6,10 @@ Tests all tools and endpoints implemented in the Phase 3 integration.
 """
 
 import json
+import asyncio
 from app.tools.career_tools import get_career_insights
-from app.tools.attendance_tools import mark_attendance, get_attendance_records
-from app.tools.email_tools import get_unread_emails, draft_email
+from app.tools.attendance_tools_supabase import mark_attendance, get_attendance_records
+from app.tools.email_tools_supabase import get_unread_emails, draft_email
 from app.tools.search_tools import get_study_material
 
 async def test_career_insights():
@@ -19,14 +20,15 @@ async def test_career_insights():
 
     for query in test_queries:
         print(f"\n🔍 Testing query: {query}")
-        result = await get_career_insights(query)
+        result = get_career_insights(query)
 
-        if result.get("success", False):
+        if not result.get("success", False):
             print(f"   ❌ Error: {result.get('error', 'Unknown error')}")
         else:
             print(f"   ✅ Career insights found for {query}")
-            insights = result.get("insights", [])
-            for i, insight in enumerate(insights[:3], 1):
+            insights_data = result.get("insights", {})
+            insights_list = insights_data.get("insights", [])
+            for i, insight in enumerate(insights_list[:3], 1):
                 print(f"      {i+1}. {insight.get('title', 'No Title')}")
                 print(f"         {insight.get('summary', 'No summary')[:100]}...")
     print()
@@ -37,29 +39,30 @@ async def test_attendance():
 
     # Test marking attendance
     test_courses = ["CS101", "Math201", "Physics101"]
+    test_user_id = 123  # Use int as expected by db_client
+
     for course in test_courses:
         print(f"\n📝 Marking attendance for {course}")
-        result = await mark_attendance(course, "test_student")
+        result = mark_attendance(course, str(test_user_id))  # Convert to string for the tool function
 
-        if result.get("success", False):
+        if not result.get("success", False):
             print(f"   ❌ Error: {result.get('error', 'Unknown error')}")
         else:
-            print(f"   ✅ Attendance marked for {result.get('attendance_data', {}).get('student', 'student')}")
-            print(f"      Date: {result.get('attendance_data', {}).get('date', 'Unknown')}")
+            print(f"   ✅ Attendance marked for user {test_user_id}")
+            print(f"      Course: {result.get('attendance_data', {}).get('course', 'Unknown')}")
             print(f"      Status: {result.get('attendance_data', {}).get('status', 'Unknown')}")
 
     # Test retrieving attendance records
     print(f"\n📊 Retrieving attendance records")
-    records_result = get_attendance_records()
+    records_result = get_attendance_records(str(test_user_id))
 
-    if records_result.get("success", False):
+    if not records_result.get("success", False):
         print(f"   ❌ Error: {records_result.get('error', 'Unknown error')}")
     else:
         records = records_result.get("records", [])
         print(f"   ✅ Found {len(records)} attendance records")
-        summary = records_result.get("summary", {})
-        for key, value in summary.items():
-            print(f"      {key}: {value}")
+        for record in records[:3]:  # Show first 3
+            print(f"      Course: {record.get('course_name', 'Unknown')}, Date: {record.get('date', 'Unknown')}")
 
 async def test_email_tools():
     """Test email functionality."""
@@ -69,11 +72,11 @@ async def test_email_tools():
     print(f"\n📧 Testing get_unread_emails")
     emails_result = await get_unread_emails("test_user")
 
-    if emails_result.get("success", False):
+    if not emails_result.get("success", False):
         if emails_result.get("auth_required", False):
-            print(f"   ❌ Error: {emails_result.get('error', 'Unknown error')}")
-        else:
             print(f"   ⚠️  Authentication required: {emails_result.get('message', 'Auth needed')}")
+        else:
+            print(f"   ❌ Error: {emails_result.get('error', 'Unknown error')}")
     else:
         print(f"   ✅ Successfully fetched {emails_result.get('total_count', 0)} unread emails")
         categories = emails_result.get("categories", {})
@@ -81,9 +84,9 @@ async def test_email_tools():
 
     # Test drafting an email
     print(f"\n✍️ Testing draft_email")
-    draft_result = await draft_email("test@example.com", "Test Subject", "Test email body")
+    draft_result = await draft_email("fake_access_token", "test@example.com", "Test Subject", "Test email body")
 
-    if draft_result.get("success", False):
+    if not draft_result.get("success", False):
         print(f"   ❌ Error: {draft_result.get('error', 'Unknown error')}")
     else:
         print(f"   ✅ Email drafted successfully: {draft_result.get('subject', 'No Subject')}")

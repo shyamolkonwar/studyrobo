@@ -41,7 +41,7 @@ def get_career_insights(field: str) -> Dict[str, Any]:
             }
 
         # Initialize Tavily client
-        tavily_client = tavily.TavilySearch(api_key=tavily_api_key)
+        tavily_client = tavily.TavilyClient(api_key=tavily_api_key)
 
         # Search for career insights
         search_query = f"latest career insights job market trends salary opportunities for {field}"
@@ -62,12 +62,7 @@ def get_career_insights(field: str) -> Dict[str, Any]:
         results = response.get('results', [])
 
         # Format the response
-        insights = {
-            "field": field,
-            "query": search_query,
-            "results_count": len(results),
-            "insights": []
-        }
+        insights_list = []
 
         # Process top 3 results
         for i, result in enumerate(results[:3]):
@@ -75,7 +70,7 @@ def get_career_insights(field: str) -> Dict[str, Any]:
             content = result.get('content', '')
             url = result.get('url', '')
 
-            insights.append({
+            insights_list.append({
                 "title": title,
                 "summary": content[:200] + '...' if len(content) > 200 else content,
                 "source": url,
@@ -85,19 +80,26 @@ def get_career_insights(field: str) -> Dict[str, Any]:
         # Add general field recommendations
         field_lower = field.lower()
         if 'software' in field_lower or 'developer' in field_lower:
-            insights.append({
+            insights_list.append({
                 "title": "Essential Skills",
                 "summary": "Strong programming skills in Python, JavaScript, and cloud platforms. Experience with version control and agile methodologies.",
                 "source": "industry_standard",
                 "relevance_score": 10
             })
         elif 'data' in field_lower or 'ai' in field_lower:
-            insights.append({
+            insights_list.append({
                 "title": "Market Demand",
                 "summary": "High demand for AI/ML professionals. Companies seeking expertise in machine learning, data analysis, and cloud deployment.",
                 "source": "market_analysis",
                 "relevance_score": 10
             })
+
+        insights = {
+            "field": field,
+            "query": search_query,
+            "results_count": len(results),
+            "insights": insights_list
+        }
 
         return {
             "success": True,

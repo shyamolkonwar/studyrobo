@@ -26,8 +26,19 @@ def mark_attendance(course_name: str, user_id: str) -> Dict[str, Any]:
         Dict[str, Any]: Confirmation of attendance marking
     """
     try:
+        # Convert user_id string to int for database (assuming it's a numeric ID)
+        try:
+            user_id_int = int(user_id)
+        except ValueError:
+            return {
+                "success": False,
+                "error": f"Invalid user_id format: {user_id}. Must be numeric.",
+                "course": course_name,
+                "user_id": user_id
+            }
+
         # Mark attendance in database
-        db_mark_attendance(course_name, user_id)
+        db_mark_attendance(user_id_int, course_name)
 
         # Get current timestamp
         timestamp = datetime.now().isoformat()
@@ -53,40 +64,48 @@ def mark_attendance(course_name: str, user_id: str) -> Dict[str, Any]:
 
 def get_attendance_records(user_id: str, course_name: str = None) -> Dict[str, Any]:
     """
-    Retrieve attendance records for a specific user from Supabase.
+    Retrieve attendance records for a specific user from database.
 
     Args:
-        user_id (str): The user's UUID from Supabase Auth
+        user_id (str): The user's ID (will be converted to int)
         course_name (str, optional): Filter by course name
 
     Returns:
         Dict[str, Any]: Attendance records
     """
     try:
-        # Use the imported Supabase client
+        # Convert user_id to int
+        try:
+            user_id_int = int(user_id)
+        except ValueError:
+            return {
+                "success": False,
+                "error": f"Invalid user_id format: {user_id}. Must be numeric.",
+                "records": [],
+                "user_id": user_id
+            }
 
         # Build query
-        query = supabase.table('attendance').select('*').eq('user_id', user_id)
-
-        # Add course filter if provided
         if course_name:
-            query = query.eq('course_name', course_name)
-
-        # Order by most recent first
-        query = query.order('marked_at', desc=True)
+            query = "SELECT id, user_id, course_name, marked_at FROM attendance WHERE user_id = %s AND course_name = %s ORDER BY marked_at DESC"
+            params = (user_id_int, course_name)
+        else:
+            query = "SELECT id, user_id, course_name, marked_at FROM attendance WHERE user_id = %s ORDER BY marked_at DESC"
+            params = (user_id_int,)
 
         # Execute query
-        result = query.execute()
+        result = execute_query(query, params)
 
         # Format records
         records = []
-        for record in result.data:
-            records.append({
-                "id": record['id'],
-                "course_name": record['course_name'],
-                "marked_at": record['marked_at'],
-                "date": record['marked_at'].split('T')[0] if 'T' in record['marked_at'] else record['marked_at']
-            })
+        if result:
+            for record in result:
+                records.append({
+                    "id": record['id'],
+                    "course_name": record['course_name'],
+                    "marked_at": str(record['marked_at']),
+                    "date": str(record['marked_at']).split(' ')[0] if ' ' in str(record['marked_at']) else str(record['marked_at'])
+                })
 
         return {
             "success": True,
