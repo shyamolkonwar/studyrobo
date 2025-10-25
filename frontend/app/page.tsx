@@ -5,8 +5,9 @@ import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import Sidebar from '@/components/sidebar';
-import EmptyState from '@/components/empty-state';
+import LayoutWrapper from '@/components/layout-wrapper';
+import DashboardWidgets from '@/components/dashboard-widgets';
+
 
 interface Conversation {
   id: string;
@@ -28,6 +29,25 @@ export default function Home() {
         router.push('/auth/login');
         return;
       }
+
+      // Check if user has completed onboarding
+      try {
+        const { data: userData, error } = await supabase
+          .from('users')
+          .select('onboarding_completed')
+          .eq('google_id', session.user.id)
+          .single();
+
+        if (!userData?.onboarding_completed) {
+          router.push('/onboarding');
+          return;
+        }
+      } catch (error) {
+        console.error('Error checking onboarding status:', error);
+        router.push('/onboarding');
+        return;
+      }
+
       setUser(session.user);
     };
 
@@ -37,7 +57,19 @@ export default function Home() {
       if (!session) {
         router.push('/auth/login');
       } else {
-        setUser(session.user);
+        // Check onboarding status on auth state change
+        supabase
+          .from('users')
+          .select('onboarding_completed')
+          .eq('google_id', session.user.id)
+          .single()
+          .then(({ data: userData }) => {
+            if (!userData?.onboarding_completed) {
+              router.push('/onboarding');
+            } else {
+              setUser(session.user);
+            }
+          });
       }
     });
 
@@ -122,11 +154,22 @@ export default function Home() {
     );
   }
 
-  // Show conversations or empty state
+  // Show professional dashboard
   return (
-    <div className="flex h-screen">
-      <Sidebar />
-      <EmptyState onPromptSelect={handlePromptSelect} />
-    </div>
+    <LayoutWrapper>
+      <div className="container mx-auto p-6">
+        <div className="mb-8 animate-fade-in">
+          <div className="mb-2">
+            <h1 className="text-4xl font-bold font-heading text-foreground">
+              Welcome back, {user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Student'}!
+            </h1>
+            <p className="text-lg text-muted-foreground font-body">
+              Here's your personalized learning dashboard
+            </p>
+          </div>
+        </div>
+        <DashboardWidgets />
+      </div>
+    </LayoutWrapper>
   );
 }

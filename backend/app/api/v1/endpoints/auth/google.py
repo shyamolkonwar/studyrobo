@@ -1,4 +1,5 @@
 from typing import Dict, Any, Optional
+import os
 import jwt
 from fastapi import APIRouter, HTTPException, Header, Depends
 from app.core.config import settings
@@ -110,16 +111,18 @@ async def get_google_auth_url(user: Dict[str, Any] = Depends(verify_supabase_tok
 
         # Store state temporarily (in production, use Redis or database)
         from app.tools.email_tools import _oauth_states
+        import datetime
         _oauth_states[state] = {
             "google_id": user["google_id"],
             "email": user["email"],
-            "created_at": "2024-01-01T00:00:00Z"
+            "created_at": datetime.datetime.utcnow().isoformat()
         }
 
         # Build Google OAuth URL
+        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
         params = {
             "client_id": os.getenv("GOOGLE_CLIENT_ID"),
-            "redirect_uri": f"{os.getenv('API_BASE_URL', 'http://localhost:8000')}/api/v1/auth/google-callback",
+            "redirect_uri": f"{frontend_url}/auth/google/callback",
             "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/spreadsheets",
             "response_type": "code",
             "access_type": "offline",
@@ -138,57 +141,99 @@ async def get_google_auth_url(user: Dict[str, Any] = Depends(verify_supabase_tok
         raise HTTPException(status_code=500, detail=f"Failed to generate auth URL: {str(e)}")
 
 @router.get("/google-callback")
-async def google_oauth_callback(code: str, state: str):
+async def google_oauth_callback(code: str, state: str, user: Dict[str, Any] = Depends(verify_supabase_token)):
     """
     Handle Google OAuth callback and exchange code for tokens.
+    Called by the frontend after receiving the authorization code.
     """
     try:
-        # Verify state parameter
+        # Verify state parameter with better error handling
         from app.tools.email_tools import _oauth_states
+        
+        # Check if state exists and is valid
         if state not in _oauth_states:
-            raise HTTPException(status_code=400, detail="Invalid state parameter")
+            print(f"State {state} not found in available states: {list(_oauth_states.keys())}")
+            raise HTTPException(status_code=400, detail="Invalid or expired state parameter")
+
+        # Verify that the user matches the state
+        user_data = _oauth_states[state]
+        if user_data["google_id"] != user["google_id"]:
+            print(f"State user mismatch: state has {user_data['google_id']}, current user has {user['google_id']}")
+            raise HTTPException(status_code=400, detail="State parameter does not match current user")
+
+        # Check if state has expired (older than 10 minutes)
+        import datetime
+        from datetime import datetime as dt
+        state_created = dt.fromisoformat(user_data.get("created_at", "2024-01-01T00:00:00Z"))
+        if (dt.utcnow() - state_created).total_seconds() > 600:  # 10 minutes
+            del _oauth_states[state]
+            raise HTTPException(status_code=400, detail="State parameter has expired")
 
         # Exchange authorization code for tokens
         import requests
 
         token_url = "https://oauth2.googleapis.com/token"
+        frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+        
+        # Validate required environment variables
+        client_id = os.getenv("GOOGLE_CLIENT_ID")
+        client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+        
+        if not client_id or not client_secret:
+            raise HTTPException(status_code=500, detail="Google OAuth credentials not configured")
+
         data = {
-            "client_id": os.getenv("GOOGLE_CLIENT_ID"),
-            "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+            "client_id": client_id,
+            "client_secret": client_secret,
             "code": code,
             "grant_type": "authorization_code",
-            "redirect_uri": f"{os.getenv('API_BASE_URL', 'http://localhost:8000')}/api/v1/auth/google-callback"
+            "redirect_uri": f"{frontend_url}/auth/google/callback"
         }
 
         response = requests.post(token_url, data=data)
-        tokens = response.json()
+        
+        if response.status_code != 200:
+            print(f"Google token exchange failed with status {response.status_code}: {response.text}")
+            raise HTTPException(status_code=400, detail=f"Google token exchange failed: {response.text}")
+
+        try:
+            tokens = response.json()
+        except ValueError as e:
+            print(f"Failed to parse Google response as JSON: {response.text}")
+            raise HTTPException(status_code=400, detail=f"Invalid response from Google: {response.text}")
 
         if "error" in tokens:
+            print(f"Google token error: {tokens['error']}")
             raise HTTPException(status_code=400, detail=f"Token exchange failed: {tokens['error']}")
 
-        # Store tokens for the user
-        user_data = _oauth_states[state]
-        google_id = user_data["google_id"]
-
-        from app.tools.email_tools import token_store
-        token_store[google_id] = {
-            "access_token": tokens["access_token"],
-            "refresh_token": tokens.get("refresh_token"),
-            "expires_in": tokens.get("expires_in", 3600),
-            "created_at": "2024-01-01T00:00:00Z"
-        }
-
-        # Clean up state
+        # Clean up state after successful token exchange
         del _oauth_states[state]
 
-        # Redirect to frontend with success
-        from fastapi.responses import RedirectResponse
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-        return RedirectResponse(f"{frontend_url}/?auth_success=true")
+        # Return tokens to frontend
+        return {
+            "access_token": tokens.get("access_token"),
+            "refresh_token": tokens.get("refresh_token"),
+            "expires_in": tokens.get("expires_in", 3600),
+            "token_type": tokens.get("token_type", "Bearer"),
+            "success": True
+        }
 
     except HTTPException:
+        # Clean up state on error if it exists
+        if 'state' in locals() and state in _oauth_states:
+            try:
+                del _oauth_states[state]
+            except:
+                pass
         raise
     except Exception as e:
+        # Clean up state on error if it exists
+        if 'state' in locals() and 'state' in locals() and state in _oauth_states:
+            try:
+                del _oauth_states[state]
+            except:
+                pass
+        print(f"OAuth callback error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"OAuth callback failed: {str(e)}")
 
 @router.post("/google-tokens")
@@ -201,20 +246,155 @@ async def store_google_tokens(
     This should be called after successful Google OAuth in the frontend.
     """
     try:
-        # For now, store in a simple in-memory store (replace with database storage)
+        # Validate token_data
+        if not token_data or not isinstance(token_data, dict):
+            raise HTTPException(status_code=400, detail="Invalid token data provided")
+        
+        if not token_data.get("access_token"):
+            raise HTTPException(status_code=400, detail="Access token is required")
+        
+        if not token_data.get("refresh_token"):
+            raise HTTPException(status_code=400, detail="Refresh token is required")
         from app.tools.email_tools import token_store
+        from app.core.supabase_client import supabase
+        import datetime
 
         google_id = user["google_id"]
         if not google_id:
             raise HTTPException(status_code=400, detail="Google ID not found")
 
-        # Store tokens with Google ID as key
+        # Store tokens in memory for immediate use
         token_store[google_id] = {
             "access_token": token_data.get("access_token"),
             "refresh_token": token_data.get("refresh_token"),
             "expires_in": token_data.get("expires_in", 3600),
-            "created_at": "2024-01-01T00:00:00Z"  # Should be current timestamp
+            "created_at": datetime.datetime.utcnow().isoformat()
         }
+
+        # Also store tokens in Supabase for persistence
+        expires_at = datetime.datetime.utcnow() + datetime.timedelta(seconds=token_data.get("expires_in", 3600))
+
+        connection_data = {
+            "user_id": user["user_id"],  # Use Supabase user ID, not Google ID
+            "app_name": "gmail",
+            "refresh_token": token_data.get("refresh_token"),
+            "access_token": token_data.get("access_token"),
+            "expires_at": expires_at.isoformat()
+        }
+
+        # Use upsert to handle both insert and update in one operation
+        try:
+            # First check if a connection already exists
+            existing_response = supabase.table('user_connections').select('*').eq('user_id', user["user_id"]).eq('app_name', 'gmail').execute()
+            
+            # Handle different response formats - some return dict, others return objects
+            if isinstance(existing_response, dict):
+                # Response is a dictionary
+                existing_data = existing_response.get('data', [])
+            elif hasattr(existing_response, 'data'):
+                # Response is an object with .data attribute
+                existing_data = existing_response.data
+            else:
+                # Fallback - assume response is the data directly
+                existing_data = existing_response or []
+            
+            # Check if we got data and it's not empty
+            if existing_data:
+                # Update existing connection
+                update_response = supabase.table('user_connections').update({
+                    "refresh_token": connection_data["refresh_token"],
+                    "access_token": connection_data["access_token"],
+                    "expires_at": connection_data["expires_at"],
+                    "updated_at": datetime.datetime.utcnow().isoformat()
+                }).eq('user_id', user["user_id"]).eq('app_name', 'gmail').execute()
+                
+                # Check if update had errors by checking response format
+                if isinstance(update_response, dict):
+                    update_success = 'data' in update_response and update_response.get('data') is not None
+                elif hasattr(update_response, 'data'):
+                    update_success = update_response.data is not None
+                else:
+                    update_success = update_response is not None
+                
+                if update_success:
+                    print(f"Update successful: {update_response}")
+                else:
+                    print(f"Update failed - no data returned")
+                    # Try insert instead
+                    insert_response = supabase.table('user_connections').insert(connection_data).execute()
+                    
+                    # Check if insert had errors
+                    if isinstance(insert_response, dict):
+                        insert_success = 'data' in insert_response and insert_response.get('data') is not None
+                    elif hasattr(insert_response, 'data'):
+                        insert_success = insert_response.data is not None
+                    else:
+                        insert_success = insert_response is not None
+                    
+                    if insert_success:
+                        print(f"Insert successful after update failed: {insert_response}")
+                    else:
+                        raise HTTPException(status_code=500, detail=f"Both update and insert failed")
+            else:
+                # Insert new connection
+                insert_response = supabase.table('user_connections').insert(connection_data).execute()
+                
+                # Check if insert had errors
+                if isinstance(insert_response, dict):
+                    insert_success = 'data' in insert_response and insert_response.get('data') is not None
+                elif hasattr(insert_response, 'data'):
+                    insert_success = insert_response.data is not None
+                else:
+                    insert_success = insert_response is not None
+                
+                if insert_success:
+                    print(f"Insert successful: {insert_response}")
+                else:
+                    print(f"Insert failed - trying update instead")
+                    # Try update instead
+                    update_response = supabase.table('user_connections').update({
+                        "refresh_token": connection_data["refresh_token"],
+                        "access_token": connection_data["access_token"],
+                        "expires_at": connection_data["expires_at"],
+                        "updated_at": datetime.datetime.utcnow().isoformat()
+                    }).eq('user_id', user["user_id"]).eq('app_name', 'gmail').execute()
+                    
+                    # Check if update had errors
+                    if isinstance(update_response, dict):
+                        update_success = 'data' in update_response and update_response.get('data') is not None
+                    elif hasattr(update_response, 'data'):
+                        update_success = update_response.data is not None
+                    else:
+                        update_success = update_response is not None
+                    
+                    if update_success:
+                        print(f"Update successful after insert failed: {update_response}")
+                    else:
+                        raise HTTPException(status_code=500, detail=f"Both insert and update failed")
+                
+        except Exception as db_error:
+            error_str = str(db_error)
+            print(f"Database operation failed: {error_str}")
+            
+            # If we still have issues, try upsert as final fallback
+            try:
+                upsert_response = supabase.table('user_connections').upsert(connection_data, onConflict='user_id,app_name').execute()
+                
+                # Check if upsert had errors
+                if isinstance(upsert_response, dict):
+                    upsert_success = 'data' in upsert_response and upsert_response.get('data') is not None
+                elif hasattr(upsert_response, 'data'):
+                    upsert_success = upsert_response.data is not None
+                else:
+                    upsert_success = upsert_response is not None
+                
+                if upsert_success:
+                    print(f"Upsert fallback successful: {upsert_response}")
+                else:
+                    raise HTTPException(status_code=500, detail=f"Upsert failed: no data returned")
+            except Exception as upsert_error:
+                print(f"Upsert fallback failed: {str(upsert_error)}")
+                raise HTTPException(status_code=500, detail=f"Failed to store connection: {error_str}")
 
         return {"message": "Tokens stored successfully"}
 
@@ -227,31 +407,48 @@ async def get_google_tokens(user: Dict[str, Any] = Depends(verify_supabase_token
     Check if user has Gmail connection in the database.
     """
     try:
-        # Get our internal user ID from Google ID
-        from app.core.db_client import get_user_by_google_id
-        db_user = get_user_by_google_id(user["google_id"])
-
-        if not db_user:
-            raise HTTPException(status_code=404, detail="User not found in database")
-
-        # Check if user has Gmail connection
+        # Check if user has Gmail connection using Supabase user ID
         from app.core.supabase_client import supabase
-        response = supabase.table('user_connections').select('*').eq('user_id', user["google_id"]).eq('app_name', 'gmail').single().execute()
+        response = supabase.table('user_connections').select('*').eq('user_id', user["user_id"]).eq('app_name', 'gmail').execute()
 
-        if not response.get('data'):
-            raise HTTPException(status_code=404, detail="Gmail not connected")
+        # Handle different response formats - some return dict, others return objects
+        if isinstance(response, dict):
+            # Response is a dictionary
+            response_data = response.get('data', [])
+        elif hasattr(response, 'data'):
+            # Response is an object with .data attribute
+            response_data = response.data
+        else:
+            # Fallback - assume response is the data directly
+            response_data = response or []
+
+        # Check if we got data and it's not empty
+        if not response_data:
+            return {
+                "connected": False,
+                "app_name": "gmail",
+                "message": "Gmail not connected"
+            }
+
+        # Handle both single record and array responses
+        connection_data = response_data[0] if isinstance(response_data, list) and response_data else response_data
 
         # Return success (don't expose actual tokens)
         return {
             "connected": True,
             "app_name": "gmail",
-            "connected_at": response['data'].get("created_at")
+            "connected_at": connection_data.get("created_at") if isinstance(connection_data, dict) else None,
+            "updated_at": connection_data.get("updated_at") if isinstance(connection_data, dict) else None
         }
 
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to check Gmail connection: {str(e)}")
+        # Return a graceful response instead of throwing 500
+        print(f"Error checking Gmail connection: {str(e)}")
+        return {
+            "connected": False,
+            "app_name": "gmail",
+            "error": f"Failed to check connection: {str(e)}"
+        }
 
 @router.get("/health")
 async def auth_health_check():

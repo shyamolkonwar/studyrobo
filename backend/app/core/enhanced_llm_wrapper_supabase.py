@@ -57,7 +57,7 @@ async def execute_tool(tool_name: str, tool_args: Dict[str, Any], google_access_
     """
     try:
         if tool_name == "get_study_material":
-            return await get_study_material(tool_args.get("query", ""))
+            return await get_study_material(tool_args.get("query", ""), user_id)
         elif tool_name == "get_career_insights":
             return await get_career_insights(tool_args.get("field", ""))
         elif tool_name == "mark_attendance":

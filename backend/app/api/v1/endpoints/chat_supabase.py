@@ -38,15 +38,9 @@ async def chat_endpoint(
                 detail="Google ID not found. Please ensure you logged in with Google."
             )
 
-        # Get our internal user ID from Google ID
-        from app.core.db_client import get_user_by_google_id, create_user
-        db_user = get_user_by_google_id(google_id)
-
-        if not db_user:
-            # Create user if they don't exist
-            user_id = create_user(google_id, user["email"], user["email"].split("@")[0])
-        else:
-            user_id = db_user["id"]
+        # Get user ID (user should already exist)
+        from app.api.v1.endpoints.documents import get_user_id
+        user_id = get_user_id(google_id)
 
         # Google tokens are now retrieved from the secure database storage
 
@@ -129,15 +123,9 @@ async def get_chat_messages(
                 detail="Google ID not found. Please ensure you logged in with Google."
             )
 
-        # Get our internal user ID from Google ID
-        from app.core.db_client import get_user_by_google_id, create_user
-        db_user = get_user_by_google_id(google_id)
-
-        if not db_user:
-            # Create user if they don't exist
-            user_id = create_user(google_id, user["email"], user["email"].split("@")[0])
-        else:
-            user_id = db_user["id"]
+        # Get user ID (user should already exist)
+        from app.api.v1.endpoints.documents import get_user_id
+        user_id = get_user_id(google_id)
         messages = get_messages(user_id)
         return messages
 

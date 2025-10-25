@@ -1,7 +1,7 @@
 from typing import Dict, Any
 from app.rag.supabase_retriever import search_documents
 
-def get_study_material(query: str) -> Dict[str, Any]:
+async def get_study_material(query: str, user_id: str = None) -> Dict[str, Any]:
     """
     Search for information about course materials, exam topics, and study guides.
 
@@ -11,13 +11,14 @@ def get_study_material(query: str) -> Dict[str, Any]:
 
     Args:
         query (str): The student's question or topic they want to study
+        user_id (str): The user's Google ID for personalized search (optional)
 
     Returns:
         Dict[str, Any]: Search results with context information
     """
     try:
-        # Search for relevant documents
-        context = search_documents(query, match_count=4)
+        # Search for relevant documents with user filtering
+        context = search_documents(query, match_count=4, google_id=user_id)
 
         return {
             "success": True,

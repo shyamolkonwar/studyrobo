@@ -30,7 +30,7 @@ def get_embedding_model():
         #     return client.embeddings.create(input=[text], model="text-embedding-3-small").data[0].embedding
     return _embedding_model
 
-def search_documents(query: str, match_threshold: float = 0.75, match_count: int = 5) -> str:
+def search_documents(query: str, match_threshold: float = 0.75, match_count: int = 5, google_id: str = None) -> str:
     """
     Search for relevant documents in database using vector similarity.
 
@@ -38,6 +38,7 @@ def search_documents(query: str, match_threshold: float = 0.75, match_count: int
         query (str): The search query
         match_threshold (float): Similarity threshold for matches (default: 0.75)
         match_count (int): Number of results to return (default: 5)
+        google_id (str): User's Google ID for personalized search (default: None)
 
     Returns:
         str: Formatted context block with relevant documents
@@ -57,22 +58,29 @@ def search_documents(query: str, match_threshold: float = 0.75, match_count: int
             # Truncate
             query_embedding = query_embedding[:EMBEDDING_DIMENSION]
 
-        # Search using database function
+        # Search using database function with user filtering
         try:
-            matches = db_search_documents(query_embedding.tolist(), match_threshold, match_count)
+            matches = db_search_documents(query_embedding.tolist(), match_threshold, match_count, google_id)
         except Exception as e:
             print(f"Error searching documents: {e}")
             return "Error searching study materials: Vector search function not available. Please ensure the database setup script has been run."
 
         # Format results
         if not matches or len(matches) == 0:
-            return "No relevant study materials found for your query."
+            if google_id:
+                return "No relevant study materials found in your personal library or course materials. Try uploading some documents first!"
+            else:
+                return "No relevant study materials found for your query."
 
         context_parts = []
         for i, match in enumerate(matches):
             content = match.get('content', '')
             similarity = match.get('similarity', 0)
-            context_parts.append(f"Document {i+1} (Similarity: {similarity:.3f}):\n{content}\n")
+            file_name = match.get('file_name', 'Unknown')
+            is_global = match.get('is_global', False)
+
+            source_type = "Course Material" if is_global else "Your Document"
+            context_parts.append(f"{source_type} ({file_name}) - Similarity: {similarity:.3f}:\n{content}\n")
 
         # Join all relevant documents
         context = "\n".join(context_parts)

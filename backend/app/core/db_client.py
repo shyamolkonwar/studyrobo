@@ -101,10 +101,16 @@ def insert_document(content: str, course_name: str, embedding: List[float]):
     query = "INSERT INTO documents (content, course_name, embedding) VALUES (%s, %s, %s)"
     execute_query(query, (content, course_name, embedding), fetch=False)
 
-def search_documents(query_embedding: List[float], match_threshold: float = 0.75, match_count: int = 5) -> List[Dict[str, Any]]:
-    """Search documents using vector similarity"""
-    query = "SELECT id, content, 1 - (embedding <=> %s::vector) as similarity FROM documents WHERE 1 - (embedding <=> %s::vector) > %s ORDER BY similarity DESC LIMIT %s"
-    return execute_query(query, (query_embedding, query_embedding, match_threshold, match_count)) or []
+def search_documents(query_embedding: List[float], match_threshold: float = 0.75, match_count: int = 5, google_id: str = None) -> List[Dict[str, Any]]:
+    """Search documents using vector similarity with user filtering"""
+    if google_id:
+        # Use the new match_documents function that filters by user
+        query = "SELECT * FROM match_documents(%s::vector, %s, %s)"
+        return execute_query(query, (query_embedding, match_threshold, match_count)) or []
+    else:
+        # Legacy behavior - search all documents
+        query = "SELECT id, content, 1 - (embedding <=> %s::vector) as similarity FROM documents WHERE 1 - (embedding <=> %s::vector) > %s ORDER BY similarity DESC LIMIT %s"
+        return execute_query(query, (query_embedding, query_embedding, match_threshold, match_count)) or []
 
 def clear_messages(user_id: int):
     """Clear all messages for a user"""

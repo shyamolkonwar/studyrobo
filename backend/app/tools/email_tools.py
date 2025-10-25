@@ -94,13 +94,13 @@ async def get_unread_emails(user_id: str = "default") -> Dict[str, Any]:
                 "user_id": user_id
             }
 
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "emails": [],
-                "message": f"Error fetching emails: {str(e)}"
-            }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "emails": [],
+            "message": f"Error fetching emails: {str(e)}"
+        }
 
 async def draft_email(to: str, subject: str, body: str, user_id: str = "default") -> Dict[str, Any]:
     """

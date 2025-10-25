@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
+import LayoutWrapper from '@/components/layout-wrapper';
 import Sidebar from '@/components/sidebar';
 
 interface Message {
@@ -281,10 +282,8 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="flex h-screen">
-      <Sidebar currentConversationId={conversationId} />
-
-      <div className="flex-1 flex flex-col">
+    <LayoutWrapper>
+      <div className="flex flex-col h-full">
         <header className="border-b border-border bg-card p-4">
           <h1 className="text-xl font-semibold truncate">
             {conversation?.title || 'Chat'}
@@ -379,6 +378,6 @@ export default function ChatPage() {
           </form>
         </footer>
       </div>
-    </div>
+    </LayoutWrapper>
   );
 }

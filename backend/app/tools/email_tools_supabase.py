@@ -228,6 +228,45 @@ def create_message(to: str, subject: str, body: str) -> str:
 
     return raw
 
+def check_gmail_connection(user_id: str) -> Dict[str, Any]:
+    """
+    Check if a user has Gmail connected.
+
+    Args:
+        user_id (str): User ID (Google ID UUID)
+
+    Returns:
+        Dict[str, Any]: Connection status
+    """
+    try:
+        # Get Supabase client to query user_connections table
+        from app.core.supabase_client import supabase
+
+        # Query the user's Gmail connection using Google ID (UUID)
+        response = supabase.table('user_connections').select('*').eq('user_id', user_id).eq('app_name', 'gmail').single().execute()
+
+        if not response.get('data'):
+            return {
+                "connected": False,
+                "message": "Gmail not connected"
+            }
+
+        connection = response['data']
+
+        return {
+            "connected": True,
+            "email": connection.get('email'),
+            "connected_at": connection.get('created_at'),
+            "message": "Gmail connected"
+        }
+
+    except Exception as e:
+        return {
+            "connected": False,
+            "error": str(e),
+            "message": "Error checking Gmail connection"
+        }
+
 def get_email_categories(emails: List[Dict]) -> Dict[str, Any]:
     """
     Categorize emails based on content and headers.

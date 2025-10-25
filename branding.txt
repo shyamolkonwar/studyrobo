@@ -1,0 +1,80 @@
+## 🎨 Color Palette
+
+Your palette needs to be professional, trustworthy, and modern. We'll use a calm blue for trust, a vibrant accent for "AI" actions, and clean neutrals for the interface.
+
+Role	Color	Hex Code	Tailwind (for shadcn/ui)
+Primary (Buttons, Links)	Deep Blue	#2563EB	bg-blue-600
+Accent (AI, Highlights)	Vibrant Violet	#8B5CF6	bg-violet-500
+Success (Confirmations)	Clean Green	#10B981	bg-emerald-500
+Warning (Alerts)	Bright Yellow	#F59E0B	bg-amber-500
+Error (Deletions)	Strong Red	#EF4444	bg-red-500
+Background (Light Mode)	White Smoke	#F8FAFC	bg-slate-50
+Background (Dark Mode)	Midnight	#0F172A	bg-slate-900
+Text (Headings)	Dark Slate	#1E293B	text-slate-800
+Text (Body/Subtle)	Medium Slate	#64748B	text-slate-600
+Borders & Cards	Light Slate	#E2E8F0	border-slate-200
+## Typography (Fonts)
+
+Readability is the #1 priority. We will use a professional, clean, and highly legible sans-serif font pairing. Both are available on Google Fonts and are standards for modern UI design.
+
+1. Headings & Dashboard Widgets
+
+Font: Figtree
+
+Why: It's modern, clean, and has a slightly rounded, friendly personality. It feels authoritative yet approachable, perfect for a "mentor."
+
+Weights: Use Semi-Bold (600) for widget titles and Bold (700) for major headings (e.g., "Dashboard").
+
+2. Body & UI Text (Chat, Buttons, Labels)
+
+Font: Inter
+
+Why: This is the gold standard for UI text. It was designed specifically for screen readability at all sizes, from tiny labels to full paragraphs. It's neutral, clean, and professional.
+
+Weights: Use Regular (400) for body text/chat and Medium (500) for button text and important labels.
+
+## 🪄 Icon Style
+
+Consistency in your icons is crucial for a professional look.
+
+Style: Line (or Outline)
+
+Why: Line icons are minimalist, modern, and clean. They don't distract from the content and match your clean font choice. Solid/filled icons can feel heavy and dated.
+
+Details:
+
+Use a consistent stroke-width (e.g., 2px).
+
+Look for a set with slightly rounded corners to match the friendly feel of your fonts.
+
+Recommended Library: Lucide Icons
+
+This is the default icon library for shadcn/ui for a reason. It's open-source, massive, and perfectly matches this branding.
+
+Examples: layout-dashboard, message-square, file-text, calendar, settings, log-out.
+
+## Logo & Naming
+
+Your name and logo should instantly communicate what you do.
+
+Name Ideas:
+
+Lemma: (A "helping proof" in math/logic. Smart, short, academic).
+
+Kōpa: (Short for "Co-pilot." Friendly and modern).
+
+Academa: (Academic + AI).
+
+Orbital: (Your personal guide that revolves around your academic life).
+
+Nexus: (The central point connecting all your student tools).
+
+Logo Design:
+
+Keep it simple. A logomark (an icon) is better than a complex text logo.
+
+Concept 1: A stylized letter "L" (for Lemma) that also looks like a chat bubble.
+
+Concept 2: A "brain" icon merged with a "circuit" icon, colored in your Accent Violet.
+
+Concept 3: An "orbit" icon with a central node, representing the app as the center of the student's universe.
