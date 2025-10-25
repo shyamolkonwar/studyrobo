@@ -243,6 +243,10 @@ async def upload_document(
             )
             embeddings.append(response.data[0].embedding)
 
+        # Determine file type
+        file_extension = file.filename.split('.')[-1].lower()
+        file_type = 'pdf' if file_extension == 'pdf' else 'docx' if file_extension == 'docx' else 'unknown'
+
         # Prepare data for insertion
         data_to_insert = []
         for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
@@ -252,6 +256,7 @@ async def upload_document(
                 "embedding": embedding,
                 "course_name": course_name,
                 "original_file_name": file.filename,
+                "file_type": file_type,
                 "file_path": file_path,
                 "chunk_index": i,
                 "total_chunks": len(chunks)

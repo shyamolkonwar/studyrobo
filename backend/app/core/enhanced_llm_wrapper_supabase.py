@@ -79,8 +79,8 @@ async def execute_tool(tool_name: str, tool_args: Dict[str, Any], google_access_
                     "error": "User ID is required for attendance marking",
                     "message": "Please ensure you're logged in to mark attendance"
                 }
-            return await mark_attendance(
-                user_id=user_id,
+            return mark_attendance(
+                user_id=str(user_id),
                 course_name=tool_args.get("course_name", "")
             )
         elif tool_name == "get_attendance_records":
@@ -92,8 +92,8 @@ async def execute_tool(tool_name: str, tool_args: Dict[str, Any], google_access_
                     "error": "User ID is required for attendance records",
                     "message": "Please ensure you're logged in to view attendance"
                 }
-            return await get_attendance_records(
-                user_id=user_id,
+            return get_attendance_records(
+                user_id=str(user_id),
                 course_name=tool_args.get("course_name")
             )
         elif tool_name == "get_unread_emails":
@@ -208,13 +208,45 @@ def extract_course_name(message: str) -> str:
         if course in message_lower:
             return course
 
-    # Try to extract words that might be course names
-    words = message_lower.split()
-    for word in words:
-        if len(word) > 3 and word not in ["mark", "attendance", "present", "here", "class", "course"]:
+    # Look for course codes after keywords like "for", "in", etc.
+    import re
+
+    # Pattern to find course codes like CS101, MATH201, etc.
+    course_code_pattern = r'\b([A-Z]{2,4}\d{2,4}|[A-Z]{2,}\s*\d{2,})\b'
+    course_codes = re.findall(course_code_pattern, message)
+    if course_codes:
+        return course_codes[0].upper()
+
+    # Look for words after "for" or "in"
+    for_pattern = r'\bfor\s+(\w+)'
+    in_pattern = r'\bin\s+(\w+)'
+
+    for_match = re.search(for_pattern, message_lower)
+    if for_match:
+        word = for_match.group(1)
+        if len(word) > 2 and word not in ["my", "the", "a", "an"]:
             return word.title()
 
-    return "General"
+    in_match = re.search(in_pattern, message_lower)
+    if in_match:
+        word = in_match.group(1)
+        if len(word) > 2 and word not in ["my", "the", "a", "an"]:
+            return word.title()
+
+    # Try to extract words that might be course names (but avoid common words)
+    words = message_lower.split()
+    excluded_words = ["mark", "attendance", "present", "here", "class", "course", "check", "my", "the", "for", "in", "and", "or", "but", "with"]
+
+    for word in words:
+        if len(word) >= 3 and word not in excluded_words and not word.isdigit():
+            # Check if it looks like a course code (letters followed by numbers)
+            if re.match(r'^[a-zA-Z]+\d+$', word):
+                return word.upper()
+            # Or if it's a reasonable course name
+            elif len(word) <= 20:  # Reasonable length limit
+                return word.title()
+
+    return ""  # Return empty string instead of "General" to indicate no specific course
 
 def extract_email_details(message: str) -> Dict[str, Any]:
     """

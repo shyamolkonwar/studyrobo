@@ -34,6 +34,18 @@ interface UserDocument {
   original_file_name: string;
   file_type: string;
   created_at: string;
+  file_path: string;
+  chunk_index: number;
+  total_chunks: number;
+}
+
+interface GroupedDocument {
+  original_file_name: string;
+  file_type: string;
+  created_at: string;
+  file_path: string;
+  total_chunks: number;
+  chunks: UserDocument[];
 }
 
 interface GmailInfo {
@@ -67,6 +79,7 @@ interface AttendanceRecord {
 export default function DashboardWidgets() {
   const [user, setUser] = useState<any>(null);
   const [userDocuments, setUserDocuments] = useState<UserDocument[]>([]);
+  const [groupedDocuments, setGroupedDocuments] = useState<GroupedDocument[]>([]);
   const [gmailInfo, setGmailInfo] = useState<GmailInfo | null>(null);
   const [calendarInfo, setCalendarInfo] = useState<CalendarInfo | null>(null);
   const [attendance, setAttendance] = useState<AttendanceRecord | null>(null);
@@ -285,6 +298,37 @@ export default function DashboardWidgets() {
     }
   };
 
+  const deleteDocumentByFilePath = async (filePath: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
+
+      // Find all chunks with this file_path
+      const chunksToDelete = userDocuments.filter(doc => doc.file_path === filePath);
+
+      // Delete all chunks
+      const deletePromises = chunksToDelete.map(chunk =>
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/documents/${chunk.id}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+        })
+      );
+
+      const results = await Promise.all(deletePromises);
+      const allSuccessful = results.every(response => response.ok);
+
+      if (allSuccessful) {
+        loadUserDocuments();
+      } else {
+        console.error('Some chunks failed to delete');
+      }
+    } catch (error) {
+      console.error('Error deleting document:', error);
+    }
+  };
+
   const handleGoogleServicesConnect = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -361,7 +405,7 @@ export default function DashboardWidgets() {
           <BookOpen className="w-5 h-5 text-brand-violet" />
           My Library
         </h3>
-        {userDocuments.length === 0 ? (
+        {groupedDocuments.length === 0 ? (
           <div className="text-center py-8">
             <FileText className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
             <p className="text-muted-foreground font-body">
@@ -370,8 +414,8 @@ export default function DashboardWidgets() {
           </div>
         ) : (
           <div className="space-y-2">
-            {userDocuments.map((doc) => (
-              <div key={doc.id} className="flex items-center justify-between p-3 bg-muted rounded-lg hover:bg-muted/80 transition-colors animate-fade-in">
+            {groupedDocuments.map((doc) => (
+              <div key={doc.file_path} className="flex items-center justify-between p-3 bg-muted rounded-lg hover:bg-muted/80 transition-colors animate-fade-in">
                 <div className="flex items-center space-x-3">
                   <div className="p-2 bg-background rounded-lg">
                     <FileText className={`w-5 h-5 ${doc.file_type === 'pdf' ? 'text-brand-red' : 'text-brand-blue'}`} />
@@ -379,14 +423,14 @@ export default function DashboardWidgets() {
                   <div>
                     <p className="font-medium font-heading text-sm">{doc.original_file_name}</p>
                     <p className="text-sm text-muted-foreground font-body">
-                      Uploaded {new Date(doc.created_at).toLocaleDateString()}
+                      Uploaded {new Date(doc.created_at).toLocaleDateString()} • {doc.total_chunks} chunks
                     </p>
                   </div>
                 </div>
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => deleteDocument(doc.id)}
+                  onClick={() => deleteDocumentByFilePath(doc.file_path)}
                   className="hover:bg-brand-red/10"
                 >
                   <Trash2 className="w-4 h-4" />
