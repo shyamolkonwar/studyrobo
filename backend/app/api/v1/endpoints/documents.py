@@ -70,17 +70,23 @@ def generate_embeddings(text: str, openai_api_key: str) -> list[float]:
     """Generate embeddings for text using OpenAI"""
     try:
         if not text.strip():
+            print("No text content to embed")
             return []
 
         # Split text into chunks
         splitter = SimpleTextSplitter(1000, 200)
         chunks = splitter.split_text(text)
+        print(f"Split text into {len(chunks)} chunks")
+
+        # Limit to first 5 chunks to avoid rate limits and long processing
+        chunks = chunks[:5] if len(chunks) > 5 else chunks
 
         # Generate embeddings for chunks
         chunk_embeddings = []
         client = openai.OpenAI(api_key=openai_api_key)
 
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks):
+            print(f"Generating embedding for chunk {i+1}/{len(chunks)}")
             response = client.embeddings.create(
                 input=chunk,
                 model='text-embedding-3-small'
@@ -96,6 +102,7 @@ def generate_embeddings(text: str, openai_api_key: str) -> list[float]:
                     embedding[i] += chunk_embedding[i]
             for i in range(embedding_dim):
                 embedding[i] /= len(chunk_embeddings)
+            print(f"Successfully generated embedding with {embedding_dim} dimensions")
             return embedding
 
         return []
@@ -246,7 +253,9 @@ async def upload_document(
             # If no document record exists, create one manually using service role
             doc_insert = None
             try:
-                doc_insert = supabase.table('documents').insert({
+                # Use service role client for document insertion (bypasses RLS)
+                service_supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
+                doc_insert = service_supabase.table('documents').insert({
                     'content': '',  # Will be populated by the edge function
                     'file_path': file_path,
                     'user_id': user_id,
@@ -303,24 +312,34 @@ async def upload_document(
 
         # Process the document directly
         try:
+            print(f"Starting document processing for document {document_id}")
+
             # Extract text content from the file
             if file_extension == 'pdf':
+                print("Extracting text from PDF")
                 content = extract_text_from_pdf(file_content)
                 if not content:
                     content = f"[PDF Document: {file.filename}] - No text content could be extracted from this PDF"
             elif file_extension == 'docx':
+                print("Extracting text from DOCX")
                 content = extract_text_from_docx(file_content)
                 if not content:
                     content = f"[DOCX Document: {file.filename}] - No text content could be extracted from this DOCX file"
             else:
                 content = f"[Document: {file.filename}] - Unsupported file type: {file_extension}"
 
+            print(f"Extracted content length: {len(content)} characters")
+
             # Generate embedding
             embedding = []
             if content and content.strip() and hasattr(settings, 'OPENAI_API_KEY') and settings.OPENAI_API_KEY:
+                print("Generating embeddings")
                 embedding = generate_embeddings(content, settings.OPENAI_API_KEY)
+                print(f"Generated embedding with {len(embedding)} dimensions")
+            else:
+                print("Skipping embedding generation - no content or API key")
 
-            # Update document with processed content and embedding
+            # Update document with processed content and embedding using service role
             update_data = {
                 'content': content,
                 'processing_status': 'completed'
@@ -328,14 +347,16 @@ async def upload_document(
             if embedding:
                 update_data['embedding'] = embedding
 
-            supabase.table('documents').update(update_data).eq('id', document_id).execute()
+            print(f"Updating document {document_id} with processed data")
+            service_supabase.table('documents').update(update_data).eq('id', document_id).execute()
             print(f"Document {document_id} processed successfully")
 
         except Exception as e:
             print(f"Failed to process document: {str(e)}")
             # Update status to failed but don't fail the upload
             try:
-                supabase.table('documents').update({
+                print(f"Updating document {document_id} status to failed")
+                service_supabase.table('documents').update({
                     'processing_status': 'failed',
                     'content': f"Error processing document: {str(e)}"
                 }).eq('id', document_id).execute()

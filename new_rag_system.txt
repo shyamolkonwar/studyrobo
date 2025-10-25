@@ -1,0 +1,184 @@
+# The New Architecture: At a Glance
+
+Frontend (Next.js): The user selects a file (.pdf, .docx) and provides metadata (like "Course Name"). It sends this as a multipart/form-data request to your FastAPI backend.
+
+Backend (FastAPI): A new, protected endpoint (e.g., /api/v1/upload) "catches" the file.
+
+Backend (FastAPI): This endpoint performs a 4-step process:
+
+Authenticate: Checks the user's token to get their user_id.
+
+Extract: Uses Python libraries to read the pdf/docx and extract all the text.
+
+Embed: Splits the text into chunks and sends them to OpenAI to get vectors.
+
+Save: Inserts the chunks, vectors, and user_id into your Supabase documents table.
+
+Backend (FastAPI): Returns a "Success" message to the frontend.
+
+## 🐍 Phase 1: The Python Backend (FastAPI)
+
+First, let's build the "engine." You need to add the right libraries and create the new endpoint.
+
+1. Install New Python Libraries
+
+In your backend/requirements.txt, add these:
+
+pypdf         # The best modern library for reading PDFs
+python-docx   # For reading .docx files
+langchain     # We still want its best-in-class text splitter
+openai        # The official OpenAI client for embeddings
+Run pip install -r requirements.txt in your backend's virtual environment.
+
+2. Create the "Auth" Dependency
+
+Your upload endpoint must be secure. You need to know who is uploading. You can re-use the supabase-admin client you already have for your tools.
+
+Create a dependency (e.g., in app/core/security.py) that:
+
+Takes the Authorization: Bearer <token> header from the request.
+
+Uses supabase_admin.auth.get_user(token) to validate the token.
+
+If valid, it returns the user object. If not, it raises a 401 Unauthorized error.
+
+3. Create the New Upload Endpoint
+
+In your app/api/v1/ folder, create a new file like endpoints/documents.py. This is the core logic.
+
+Here is the flow inside your new endpoint:
+
+Define the endpoint:
+
+It must be a POST request (e.g., /upload).
+
+It must be protected by your new auth dependency.
+
+It must accept File and Form data.
+
+Receive the Data:
+
+Your endpoint will receive file: UploadFile and course_name: str = Form(...).
+
+It will also get the user object from the auth dependency, so you have user.id.
+
+Extract Text (The "Router"):
+
+Read the file content: file_content = await file.read()
+
+Check the file.filename:
+
+If .pdf:
+
+Import pypdf.
+
+Load the file from memory: reader = pypdf.PdfReader(io.BytesIO(file_content))
+
+Loop through reader.pages and extract_text() from each page.
+
+Join all page text into one giant string: full_text.
+
+If .docx:
+
+Import docx.
+
+Load the file: doc = docx.Document(io.BytesIO(file_content))
+
+Loop through doc.paragraphs and get p.text.
+
+Join all paragraph text into full_text.
+
+Else: Return a 400 error: "Unsupported file type."
+
+Split Text (LangChain):
+
+Import RecursiveCharacterTextSplitter.
+
+Initialize it: splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
+
+Split the full_text: chunks = splitter.split_text(full_text) (This gives you an array of strings).
+
+Embed Chunks (OpenAI):
+
+Initialize your OpenAI client with your API key.
+
+Call the embeddings API:
+
+Python
+response = openai.embeddings.create(
+    input=chunks,
+    model="text-embedding-3-small" 
+)
+Extract the vectors: vectors = [item.embedding for item in response.data]
+
+Save to Supabase (pgvector):
+
+Now you have your chunks (text) and vectors (floats).
+
+Prepare a list of dictionaries to insert into your documents table:
+
+Python
+data_to_insert = []
+for i in range(len(chunks)):
+    data_to_insert.append({
+        "user_id": user.id,  # <-- This is the magic!
+        "content": chunks[i],
+        "embedding": vectors[i],
+        "course_name": course_name,
+        "original_file_name": file.filename
+    })
+Use your supabase_admin client to save everything in one go: supabase_admin.table("documents").insert(data_to_insert).execute()
+
+Return Success:
+
+Return a 200 OK JSON response: {"message": "File processed and saved successfully!"}
+
+## 💻 Phase 2: The Frontend (Next.js)
+
+Now, let's wire up your "Upload" button to this new backend endpoint.
+
+The Component: You have your "Upload New Resource" button in the dashboard. It opens a Dialog.
+
+The Form: Inside the Dialog, you'll have:
+
+An <input type="file" /> (you can style it as a dropzone).
+
+An <Input /> from shadcn/ui for "Course Name."
+
+A "Submit" button.
+
+The onSubmit Function (This is key):
+
+When the user clicks "Submit," you do not send JSON. You must send FormData.
+
+Get the current Supabase session token: const { data: { session } } = await supabase.auth.getSession();
+
+If no session, return an error.
+
+Create the FormData object:
+
+JavaScript
+const formData = new FormData();
+formData.append("file", theFileObjectFromInput);
+formData.append("course_name", theCourseNameFromInput);
+Use fetch to send this to your backend:
+
+JavaScript
+// Show a loading spinner here...
+
+const response = await fetch("http://localhost:8000/api/v1/upload", { // Your FastAPI URL
+  method: "POST",
+  headers: {
+    // DO NOT set 'Content-Type'. The browser sets it 
+    // to 'multipart/form-data' automatically for FormData.
+    'Authorization': `Bearer ${session.access_token}`
+  },
+  body: formData
+});
+
+// Hide spinner...
+if (response.ok) {
+  // Show a "Success!" toast
+} else {
+  // Show an "Error" toast
+}
