@@ -9,8 +9,99 @@ from app.core.supabase_client import get_supabase_client, supabase
 from supabase import create_client, Client
 from app.api.v1.endpoints.auth.google import verify_supabase_token
 import httpx
+import io
+from pypdf import PdfReader
+from docx import Document
+import openai
+import numpy as np
 
 router = APIRouter()
+
+# Simple text splitter implementation
+class SimpleTextSplitter:
+    def __init__(self, chunk_size: int, chunk_overlap: int):
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+
+    def split_text(self, text: str) -> list[str]:
+        chunks = []
+        start = 0
+
+        while start < len(text):
+            end = start + self.chunk_size
+            if end > len(text):
+                end = len(text)
+
+            chunks.append(text[start:end])
+            start = end - self.chunk_overlap
+
+            if start >= len(text):
+                break
+
+        return chunks
+
+def extract_text_from_pdf(file_content: bytes) -> str:
+    """Extract text from PDF file"""
+    try:
+        pdf_file = io.BytesIO(file_content)
+        pdf_reader = PdfReader(pdf_file)
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+        return text.strip()
+    except Exception as e:
+        print(f"Error extracting text from PDF: {e}")
+        return f"[PDF Document] - Error extracting text: {str(e)}"
+
+def extract_text_from_docx(file_content: bytes) -> str:
+    """Extract text from DOCX file"""
+    try:
+        docx_file = io.BytesIO(file_content)
+        doc = Document(docx_file)
+        text = ""
+        for paragraph in doc.paragraphs:
+            text += paragraph.text + "\n"
+        return text.strip()
+    except Exception as e:
+        print(f"Error extracting text from DOCX: {e}")
+        return f"[DOCX Document] - Error extracting text: {str(e)}"
+
+def generate_embeddings(text: str, openai_api_key: str) -> list[float]:
+    """Generate embeddings for text using OpenAI"""
+    try:
+        if not text.strip():
+            return []
+
+        # Split text into chunks
+        splitter = SimpleTextSplitter(1000, 200)
+        chunks = splitter.split_text(text)
+
+        # Generate embeddings for chunks
+        chunk_embeddings = []
+        client = openai.OpenAI(api_key=openai_api_key)
+
+        for chunk in chunks:
+            response = client.embeddings.create(
+                input=chunk,
+                model='text-embedding-3-small'
+            )
+            chunk_embeddings.append(response.data[0].embedding)
+
+        # Average the embeddings
+        if chunk_embeddings:
+            embedding_dim = len(chunk_embeddings[0])
+            embedding = [0.0] * embedding_dim
+            for chunk_embedding in chunk_embeddings:
+                for i in range(embedding_dim):
+                    embedding[i] += chunk_embedding[i]
+            for i in range(embedding_dim):
+                embedding[i] /= len(chunk_embeddings)
+            return embedding
+
+        return []
+    except Exception as e:
+        print(f"Error generating embeddings: {e}")
+        return []
 
 def get_user_id(google_id: str) -> int:
     """Get user ID from Google ID - assumes user already exists"""
@@ -210,30 +301,46 @@ async def upload_document(
         else:
             document_id = doc_info[0]['id']
 
-        # Trigger document processing via Edge Function
+        # Process the document directly
         try:
-            edge_function_url = f"{settings.SUPABASE_URL}/functions/v1/process-document"
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    edge_function_url,
-                    json={
-                        "documentId": document_id,
-                        "filePath": file_path
-                    },
-                    headers={
-                        "Authorization": f"Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}",
-                        "Content-Type": "application/json"
-                    },
-                    timeout=30.0
-                )
+            # Extract text content from the file
+            if file_extension == 'pdf':
+                content = extract_text_from_pdf(file_content)
+                if not content:
+                    content = f"[PDF Document: {file.filename}] - No text content could be extracted from this PDF"
+            elif file_extension == 'docx':
+                content = extract_text_from_docx(file_content)
+                if not content:
+                    content = f"[DOCX Document: {file.filename}] - No text content could be extracted from this DOCX file"
+            else:
+                content = f"[Document: {file.filename}] - Unsupported file type: {file_extension}"
 
-                if response.status_code != 200:
-                    print(f"Edge function response: {response.status_code} - {response.text}")
-                    # Don't fail the upload if processing fails, just log it
-                    # The document will remain in "Processing..." state
+            # Generate embedding
+            embedding = []
+            if content and content.strip() and hasattr(settings, 'OPENAI_API_KEY') and settings.OPENAI_API_KEY:
+                embedding = generate_embeddings(content, settings.OPENAI_API_KEY)
+
+            # Update document with processed content and embedding
+            update_data = {
+                'content': content,
+                'processing_status': 'completed'
+            }
+            if embedding:
+                update_data['embedding'] = embedding
+
+            supabase.table('documents').update(update_data).eq('id', document_id).execute()
+            print(f"Document {document_id} processed successfully")
+
         except Exception as e:
-            print(f"Failed to trigger document processing: {str(e)}")
-            # Don't fail the upload, just log the error
+            print(f"Failed to process document: {str(e)}")
+            # Update status to failed but don't fail the upload
+            try:
+                supabase.table('documents').update({
+                    'processing_status': 'failed',
+                    'content': f"Error processing document: {str(e)}"
+                }).eq('id', document_id).execute()
+            except Exception as update_error:
+                print(f"Failed to update document status: {str(update_error)}")
 
         return {
             "message": "Document uploaded successfully",

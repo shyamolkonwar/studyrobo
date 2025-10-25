@@ -89,17 +89,17 @@ This document summarizes the implementation of the new personalized RAG system a
 
 ### 5. Document Processing Pipeline
 
-#### Supabase Edge Function (`supabase/functions/process-document/`)
-- Automatic text extraction from PDF/DOCX files
-- Text chunking (500 character chunks)
-- OpenAI embedding generation
+#### Backend Document Processing
+- Automatic text extraction from PDF/DOCX files in Python backend
+- Text chunking (1000 character chunks with 200 overlap)
+- OpenAI embedding generation using text-embedding-3-small
 - Vector storage with metadata
 - Error handling and logging
 
 #### Processing Flow
 1. User uploads file → Supabase Storage
 2. Database trigger creates document record
-3. Edge Function processes file asynchronously
+3. Backend processes file synchronously during upload
 4. Text extraction → Chunking → Embedding → Storage
 5. Document becomes searchable in RAG system
 
@@ -165,10 +165,6 @@ backend/
 ├── migration_update_users.sql       # User table enhancements
 ├── migration_update_documents.sql   # Document multi-tenancy
 └── supabase_storage_setup.sql       # Storage configuration
-
-supabase/
-└── functions/
-    └── process-document/            # Document processing Edge Function
 ```
 
 ## 🔐 Security Features
@@ -191,14 +187,14 @@ To deploy this system:
    \i supabase_storage_setup.sql
    ```
 
-2. **Deploy Edge Functions**:
+2. **Install Python Dependencies**:
    ```bash
-   cd supabase
-   supabase functions deploy process-document
+   cd backend
+   pip install -r requirements.txt
    ```
 
 3. **Environment Variables**:
-   - Set `OPENAI_API_KEY` in Supabase Edge Function secrets
+   - Set `OPENAI_API_KEY` in backend `.env` file
    - Update backend `.env` with database URLs
 
 4. **Test the System**:

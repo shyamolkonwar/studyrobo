@@ -7,7 +7,7 @@ app = FastAPI(title=settings.PROJECT_NAME)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Next.js default port
+    allow_origins=["http://localhost:3000", "http://frontend:3000"],  # Next.js default port and Docker service
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

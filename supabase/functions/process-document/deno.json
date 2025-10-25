@@ -1,7 +1,0 @@
-{
-  "imports": {
-    "pdf-parse": "https://esm.sh/pdf-parse@1.1.1",
-    "mammoth": "https://esm.sh/mammoth@1.6.0",
-    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2"
-  }
-}
