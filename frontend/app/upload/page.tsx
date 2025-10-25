@@ -330,9 +330,9 @@ export default function UploadPage() {
             </div>
           ) : (
             <div className="space-y-4">
-              {uploadedFiles.map((doc) => (
+              {uploadedFiles.map((doc, index) => (
                 <div
-                  key={doc.id}
+                  key={`${doc.id}-${index}`}
                   className="flex items-center justify-between p-4 border rounded-lg"
                 >
                   <div className="flex items-center gap-3">

@@ -84,7 +84,8 @@ async def chat_endpoint(
         reply = await get_llm_response_with_supabase(
             message=request.message,
             google_access_token=None,  # Tokens are now retrieved from secure database storage
-            user_id=user["google_id"],  # Use Google ID (UUID) for database queries
+            user_id=user_id,  # Use integer user_id for message storage
+            google_id=user["google_id"],  # Use Google ID for tool execution
             conversation_id=request.conversation_id
         )
 
@@ -153,7 +154,8 @@ async def test_chat_endpoint(request: ChatRequest):
         reply = await get_llm_response_with_supabase(
             message=request.message,
             google_access_token=None,
-            user_id=None
+            user_id=None,
+            google_id=None
         )
 
         return ChatResponse(

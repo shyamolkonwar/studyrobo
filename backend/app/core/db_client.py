@@ -88,6 +88,21 @@ def add_message_to_conversation(conversation_id: str, role: str, content: str):
         raise ValueError(f"Conversation {conversation_id} not found")
 
     user_id = result[0]['user_id']
+    
+    # Validate that user_id is an integer (not a Google ID string)
+    if not isinstance(user_id, int):
+        # Try to convert to int, if it fails, we need to look up the correct user_id
+        try:
+            user_id = int(user_id)
+        except (ValueError, TypeError):
+            # This might be a Google ID, try to find the corresponding user
+            google_id = str(user_id)
+            user_lookup = execute_query("SELECT id FROM users WHERE google_id = %s", (google_id,))
+            if user_lookup:
+                user_id = user_lookup[0]['id']
+            else:
+                raise ValueError(f"Invalid user_id in conversation {conversation_id}: {user_id}")
+    
     query = "INSERT INTO messages (conversation_id, user_id, role, content) VALUES (%s, %s, %s, %s)"
     execute_query(query, (conversation_id, user_id, role, content), fetch=False)
 
@@ -104,11 +119,33 @@ def insert_document(content: str, course_name: str, embedding: List[float]):
 def search_documents(query_embedding: List[float], match_threshold: float = 0.75, match_count: int = 5, google_id: str = None) -> List[Dict[str, Any]]:
     """Search documents using vector similarity with user filtering"""
     if google_id:
-        # Use the new match_documents function that filters by user
-        query = "SELECT * FROM match_documents(%s::vector, %s, %s)"
-        return execute_query(query, (query_embedding, match_threshold, match_count)) or []
+        # Get user_id from google_id first
+        user_query = "SELECT id FROM users WHERE google_id = %s"
+        user_result = execute_query(user_query, (google_id,))
+        if not user_result:
+            return []  # User not found, return empty results
+
+        user_id = user_result[0]['id']
+
+        # Filter by user's own documents
+        query = """
+        SELECT
+            documents.id,
+            documents.content,
+            1 - (documents.embedding <=> %s::vector) as similarity,
+            documents.course_name,
+            documents.original_file_name as file_name,
+            documents.file_type,
+            (documents.user_id IS NULL) as is_global
+        FROM documents
+        WHERE 1 - (documents.embedding <=> %s::vector) > %s
+        AND documents.user_id = %s
+        ORDER BY similarity DESC
+        LIMIT %s
+        """
+        return execute_query(query, (query_embedding, query_embedding, match_threshold, user_id, match_count)) or []
     else:
-        # Legacy behavior - search all documents
+        # Legacy behavior - search all documents (for backward compatibility)
         query = "SELECT id, content, 1 - (embedding <=> %s::vector) as similarity FROM documents WHERE 1 - (embedding <=> %s::vector) > %s ORDER BY similarity DESC LIMIT %s"
         return execute_query(query, (query_embedding, query_embedding, match_threshold, match_count)) or []
 

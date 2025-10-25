@@ -1,7 +1,7 @@
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.5.0
-openai>=1.6.1
+openai
 requests>=2.25.0
 google-genai>=0.8.0
 mistralai>=0.4.0
@@ -12,8 +12,9 @@ supabase>=2.0.0
 sentence-transformers>=2.7.0
 PyPDF2==3.0.1
 pypdf==3.17.4
-langchain==0.1.0
-langchain-openai==0.0.2
+langchain
+langchain-openai
+numpy
 tavily-python==0.3.9
 google-auth==2.25.1
 google-auth-oauthlib==1.2.0
