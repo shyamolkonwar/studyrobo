@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Header
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Header, Form
 from fastapi.responses import JSONResponse
 from typing import List, Optional, Dict, Any
 import os
@@ -14,6 +14,7 @@ from pypdf import PdfReader
 from docx import Document
 import openai
 import numpy as np
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 router = APIRouter()
 
@@ -165,10 +166,11 @@ async def get_user_documents(
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
+    course_name: str = Form(...),
     user: Dict[str, Any] = Depends(verify_supabase_token),
     supabase_client: Client = Depends(get_supabase_client)
 ):
-    """Upload a document to Supabase Storage and process it"""
+    """Upload a document, extract text, chunk it, generate embeddings, and save to database"""
     try:
         # Validate file type
         allowed_types = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
@@ -180,44 +182,18 @@ async def upload_document(
 
         # Get user info
         google_id = user["google_id"]
-        email = user.get("email", "")
-
-        # Get user
         user_id = get_user_id(google_id)
 
-        # Get user's course info
-        user_data = supabase_client.table('users').select('course_name').eq('id', user_id).execute()
-        
-        # Handle both dictionary and object response formats
-        if isinstance(user_data, dict):
-            user_info = user_data.get('data', [])
-        elif hasattr(user_data, 'data'):
-            user_info = user_data.data
-        else:
-            user_info = []
-            
-        course_name = user_info[0].get('course_name', 'General') if user_info else 'General'
+        # Read file content
+        file_content = await file.read()
 
-        # Create unique file path
+        # Create unique file path for storage
         file_extension = file.filename.split('.')[-1].lower()
         unique_filename = f"{uuid.uuid4()}.{file_extension}"
         file_path = f"{google_id}/{unique_filename}"
 
-        # Determine file type
-        if file_extension == 'pdf':
-            file_type = 'pdf'
-        elif file_extension == 'docx':
-            file_type = 'docx'
-        else:
-            file_type = 'unknown'
-
         # Upload file to Supabase Storage
         try:
-            # Read file content
-            file_content = await file.read()
-
-            # Upload to storage using service role (bypasses RLS)
-            from supabase import create_client
             service_supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
             storage_response = service_supabase.storage.from_('user-documents').upload(
                 path=file_path,
@@ -227,152 +203,74 @@ async def upload_document(
                     'upsert': False
                 }
             )
-
-            # Check if upload was successful (Supabase raises exception on failure)
-            if not storage_response or hasattr(storage_response, 'status_code') and storage_response.status_code != 200:
+            if not storage_response:
                 raise HTTPException(status_code=500, detail="Failed to upload file to storage")
-
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Storage upload failed: {str(e)}")
 
-        # Try to get the uploaded document ID (should have been created by trigger)
-        try:
-            doc_data = supabase.table('documents').select('id').eq('file_path', file_path).execute()
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to query documents: {str(e)}")
-
-        # Handle both dictionary and object response formats for doc_data
-        if isinstance(doc_data, dict):
-            doc_info = doc_data.get('data', [])
-        elif hasattr(doc_data, 'data'):
-            doc_info = doc_data.data
+        # Extract text from file
+        if file_extension == 'pdf':
+            full_text = extract_text_from_pdf(file_content)
+        elif file_extension == 'docx':
+            full_text = extract_text_from_docx(file_content)
         else:
-            doc_info = []
-            
-        if not doc_info or len(doc_info) == 0:
-            # If no document record exists, create one manually using service role
-            doc_insert = None
-            try:
-                # Use service role client for document insertion (bypasses RLS)
-                service_supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
-                doc_insert = service_supabase.table('documents').insert({
-                    'content': '',  # Will be populated by the edge function
-                    'file_path': file_path,
-                    'user_id': user_id,
-                    'course_name': course_name,
-                    'original_file_name': file.filename,
-                    'file_type': file_type,
-                    'processing_status': 'processing'
-                }).execute()
-                print(f"DEBUG: Insert result: {doc_insert}")  # Debug logging
-            except Exception as e:
-                print(f"DEBUG: Insert exception: {str(e)}")  # Debug logging
-                # Don't raise exception here - the insert might have succeeded despite the error
-                # We'll try to query for the document below
+            raise HTTPException(status_code=400, detail="Unsupported file type")
 
-            # Try to get the document ID - handle different response formats
-            document_id = None
-            if doc_insert:
-                # Handle both dictionary and object response formats for doc_insert
-                if isinstance(doc_insert, dict):
-                    insert_data = doc_insert.get('data', [])
-                elif hasattr(doc_insert, 'data'):
-                    insert_data = doc_insert.data
-                else:
-                    insert_data = []
-                    
-                if insert_data and len(insert_data) > 0:
-                    document_id = insert_data[0]['id']
-                    print(f"DEBUG: Got ID from insert response: {document_id}")
+        if not full_text.strip():
+            raise HTTPException(status_code=400, detail="No text content could be extracted from the file")
 
-            if document_id is None:
-                # If we can't get the ID from response, query for the document we just created
-                print("DEBUG: Querying for created document...")
-                try:
-                    doc_query = supabase.table('documents').select('id').eq('file_path', file_path).execute()
-                    
-                    # Handle both dictionary and object response formats for doc_query
-                    if isinstance(doc_query, dict):
-                        query_data = doc_query.get('data', [])
-                    elif hasattr(doc_query, 'data'):
-                        query_data = doc_query.data
-                    else:
-                        query_data = []
-                        
-                    if query_data and len(query_data) > 0:
-                        document_id = query_data[0]['id']
-                        print(f"DEBUG: Got ID from query: {document_id}")
-                    else:
-                        raise HTTPException(status_code=500, detail="Could not retrieve created document ID")
-                except Exception as query_error:
-                    print(f"DEBUG: Query failed: {str(query_error)}")
-                    raise HTTPException(status_code=500, detail=f"Failed to query created document: {str(query_error)}")
-        else:
-            document_id = doc_info[0]['id']
+        # Split text into chunks using LangChain
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=150,
+            length_function=len
+        )
+        chunks = text_splitter.split_text(full_text)
+        print(f"Split text into {len(chunks)} chunks")
 
-        # Process the document directly
-        try:
-            print(f"Starting document processing for document {document_id}")
+        # Generate embeddings for each chunk
+        if not hasattr(settings, 'OPENAI_API_KEY') or not settings.OPENAI_API_KEY:
+            raise HTTPException(status_code=500, detail="OpenAI API key not configured")
 
-            # Extract text content from the file
-            if file_extension == 'pdf':
-                print("Extracting text from PDF")
-                content = extract_text_from_pdf(file_content)
-                if not content:
-                    content = f"[PDF Document: {file.filename}] - No text content could be extracted from this PDF"
-            elif file_extension == 'docx':
-                print("Extracting text from DOCX")
-                content = extract_text_from_docx(file_content)
-                if not content:
-                    content = f"[DOCX Document: {file.filename}] - No text content could be extracted from this DOCX file"
-            else:
-                content = f"[Document: {file.filename}] - Unsupported file type: {file_extension}"
+        client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+        embeddings = []
 
-            print(f"Extracted content length: {len(content)} characters")
+        for i, chunk in enumerate(chunks):
+            print(f"Generating embedding for chunk {i+1}/{len(chunks)}")
+            response = client.embeddings.create(
+                input=chunk,
+                model="text-embedding-3-small"
+            )
+            embeddings.append(response.data[0].embedding)
 
-            # Generate embedding
-            embedding = []
-            if content and content.strip() and hasattr(settings, 'OPENAI_API_KEY') and settings.OPENAI_API_KEY:
-                print("Generating embeddings")
-                embedding = generate_embeddings(content, settings.OPENAI_API_KEY)
-                print(f"Generated embedding with {len(embedding)} dimensions")
-            else:
-                print("Skipping embedding generation - no content or API key")
+        # Prepare data for insertion
+        data_to_insert = []
+        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+            data_to_insert.append({
+                "user_id": user_id,
+                "content": chunk,
+                "embedding": embedding,
+                "course_name": course_name,
+                "original_file_name": file.filename,
+                "file_path": file_path,
+                "chunk_index": i,
+                "total_chunks": len(chunks)
+            })
 
-            # Update document with processed content and embedding using service role
-            update_data = {
-                'content': content,
-                'processing_status': 'completed'
-            }
-            if embedding:
-                update_data['embedding'] = embedding
-
-            print(f"Updating document {document_id} with processed data")
-            service_supabase.table('documents').update(update_data).eq('id', document_id).execute()
-            print(f"Document {document_id} processed successfully")
-
-        except Exception as e:
-            print(f"Failed to process document: {str(e)}")
-            # Update status to failed but don't fail the upload
-            try:
-                print(f"Updating document {document_id} status to failed")
-                service_supabase.table('documents').update({
-                    'processing_status': 'failed',
-                    'content': f"Error processing document: {str(e)}"
-                }).eq('id', document_id).execute()
-            except Exception as update_error:
-                print(f"Failed to update document status: {str(update_error)}")
+        # Insert all chunks into documents table
+        service_supabase.table("documents").insert(data_to_insert).execute()
 
         return {
-            "message": "Document uploaded successfully",
-            "document_id": document_id,
+            "message": "File processed and saved successfully",
+            "chunks_created": len(chunks),
             "filename": file.filename,
-            "file_path": file_path
+            "course_name": course_name
         }
 
     except HTTPException:
         raise
     except Exception as e:
+        print(f"Upload failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 @router.delete("/{document_id}")

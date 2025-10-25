@@ -247,11 +247,40 @@ async def process_tool_results(tool_results: List[Dict], intent: str, original_m
         if not result.get("success", False):
             return f"I encountered an error while searching study materials: {result.get('error', 'Unknown error')}"
 
-        # Return the formatted context with study materials
-        response = f"Based on your study materials, here's what I found:\n\n{context}\n\n"
-        response += "If this doesn't fully answer your question, please provide more details or upload additional study materials."
+        # Use LLM to synthesize an answer based on the retrieved context
+        try:
+            llm_provider = get_llm_provider()
 
-        return response
+            synthesis_prompt = f"""Based on the following information from the user's study materials, please provide a comprehensive and well-structured answer to their question: "{original_message}"
+
+Study Materials Context:
+{context}
+
+Please synthesize this information into a clear, helpful answer. Focus on being accurate, comprehensive, and directly addressing the user's question. If the context doesn't fully answer the question, mention what additional information might be needed."""
+
+            # Get LLM response using the synthesis prompt
+            synthesis_response = await llm_provider.create_completion(
+                messages=[{"role": "user", "content": synthesis_prompt}],
+                tools=[],  # No tools needed for synthesis
+                tool_choice=None,
+                max_tokens=1500,
+                temperature=0.3
+            )
+
+            # Extract the answer from the response
+            answer = synthesis_response['choices'][0]['message']['content']
+
+            # Add a note about the source
+            answer += "\n\n*This answer is based on information from your uploaded study materials. If you need more details or have additional questions, feel free to ask!*"
+
+            return answer
+
+        except Exception as e:
+            logger.error(f"Error synthesizing answer with LLM: {str(e)}")
+            # Fallback to raw context if LLM synthesis fails
+            response = f"Based on your study materials, here's what I found:\n\n{context}\n\n"
+            response += "If this doesn't fully answer your question, please provide more details or upload additional study materials."
+            return response
 
     elif tool_name == "get_career_insights":
         insights = result.get("insights", "")

@@ -259,7 +259,7 @@ export default function DashboardWidgets() {
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Button
-            onClick={() => router.push('/chat/new')}
+            onClick={createNewChat}
             className="h-16 text-lg font-body"
             variant="brand"
             size="lg"

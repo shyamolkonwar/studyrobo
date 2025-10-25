@@ -65,7 +65,8 @@ def get_messages_by_conversation(conversation_id: str, google_id: str = None) ->
         SELECT m.id, m.role, m.content, m.created_at::text as created_at
         FROM messages m
         JOIN conversations c ON m.conversation_id = c.id
-        WHERE m.conversation_id = %s AND c.user_id = (SELECT id FROM users WHERE google_id = %s)
+        JOIN users u ON c.user_id = u.id
+        WHERE m.conversation_id = %s AND u.google_id = %s
         ORDER BY m.created_at
         """
         return execute_query(query, (conversation_id, google_id)) or []
@@ -116,38 +117,60 @@ def insert_document(content: str, course_name: str, embedding: List[float]):
     query = "INSERT INTO documents (content, course_name, embedding) VALUES (%s, %s, %s)"
     execute_query(query, (content, course_name, embedding), fetch=False)
 
-def search_documents(query_embedding: List[float], match_threshold: float = 0.75, match_count: int = 5, google_id: str = None) -> List[Dict[str, Any]]:
-    """Search documents using vector similarity with user filtering"""
-    if google_id:
-        # Get user_id from google_id first
-        user_query = "SELECT id FROM users WHERE google_id = %s"
-        user_result = execute_query(user_query, (google_id,))
-        if not user_result:
-            return []  # User not found, return empty results
+def search_documents(query_embedding: List[float], match_threshold: float = 0.3, match_count: int = 4, google_id: str = None) -> List[Dict[str, Any]]:
+    """Search documents using direct SQL queries with user filtering"""
+    try:
+        if google_id:
+            # Get user_id from google_id
+            user_query = "SELECT id, course_name FROM users WHERE google_id = %s"
+            user_result = execute_query(user_query, (google_id,))
+            if not user_result:
+                return []
 
-        user_id = user_result[0]['id']
+            user_id = user_result[0]['id']
+            user_course = user_result[0]['course_name']
 
-        # Filter by user's own documents
-        query = """
-        SELECT
-            documents.id,
-            documents.content,
-            1 - (documents.embedding <=> %s::vector) as similarity,
-            documents.course_name,
-            documents.original_file_name as file_name,
-            documents.file_type,
-            (documents.user_id IS NULL) as is_global
-        FROM documents
-        WHERE 1 - (documents.embedding <=> %s::vector) > %s
-        AND documents.user_id = %s
-        ORDER BY similarity DESC
-        LIMIT %s
-        """
-        return execute_query(query, (query_embedding, query_embedding, match_threshold, user_id, match_count)) or []
-    else:
-        # Legacy behavior - search all documents (for backward compatibility)
-        query = "SELECT id, content, 1 - (embedding <=> %s::vector) as similarity FROM documents WHERE 1 - (embedding <=> %s::vector) > %s ORDER BY similarity DESC LIMIT %s"
-        return execute_query(query, (query_embedding, query_embedding, match_threshold, match_count)) or []
+            # Search with user filtering
+            query = """
+            SELECT
+                id,
+                content,
+                1 - (embedding <=> %s::vector) as similarity,
+                course_name,
+                original_file_name as file_name,
+                file_type,
+                (user_id IS NULL) as is_global
+            FROM documents
+            WHERE 1 - (embedding <=> %s::vector) > %s
+            AND (
+                user_id = %s
+                OR (user_id IS NULL AND course_name = %s)
+                OR (user_id IS NULL AND course_name IS NULL)
+            )
+            ORDER BY similarity DESC
+            LIMIT %s
+            """
+            return execute_query(query, (query_embedding, query_embedding, match_threshold, user_id, user_course, match_count)) or []
+        else:
+            # Fallback for no user context - search all documents
+            query = """
+            SELECT
+                id,
+                content,
+                1 - (embedding <=> %s::vector) as similarity,
+                course_name,
+                original_file_name as file_name,
+                file_type,
+                (user_id IS NULL) as is_global
+            FROM documents
+            WHERE 1 - (embedding <=> %s::vector) > %s
+            ORDER BY similarity DESC
+            LIMIT %s
+            """
+            return execute_query(query, (query_embedding, query_embedding, match_threshold, match_count)) or []
+    except Exception as e:
+        print(f"Error in search_documents: {e}")
+        return []
 
 def clear_messages(user_id: int):
     """Clear all messages for a user"""
@@ -177,7 +200,8 @@ def get_user_conversations(google_id: str) -> List[Dict[str, Any]]:
            COUNT(m.id) as message_count
     FROM conversations c
     LEFT JOIN messages m ON c.id = m.conversation_id
-    WHERE c.user_id = (SELECT id FROM users WHERE google_id = %s)
+    JOIN users u ON c.user_id = u.id
+    WHERE u.google_id = %s
     GROUP BY c.id, c.title, c.created_at
     ORDER BY c.created_at DESC
     """
@@ -188,8 +212,8 @@ def delete_conversation(conversation_id: str, google_id: str):
     # Verify user owns the conversation
     verify_query = """
     SELECT 1 FROM conversations c
-    WHERE c.id = %s
-    AND c.user_id = (SELECT id FROM users WHERE google_id = %s)
+    JOIN users u ON c.user_id = u.id
+    WHERE c.id = %s AND u.google_id = %s
     """
     result = execute_query(verify_query, (conversation_id, google_id))
     if not result:
@@ -207,8 +231,8 @@ def update_conversation_title(conversation_id: str, google_id: str, title: str):
     # Verify user owns the conversation
     verify_query = """
     SELECT 1 FROM conversations c
-    WHERE c.id = %s
-    AND c.user_id = (SELECT id FROM users WHERE google_id = %s)
+    JOIN users u ON c.user_id = u.id
+    WHERE c.id = %s AND u.google_id = %s
     """
     result = execute_query(verify_query, (conversation_id, google_id))
     if not result:

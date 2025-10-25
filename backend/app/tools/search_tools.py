@@ -1,18 +1,7 @@
 from typing import Dict, Any
 from app.core.db_client import search_documents as db_search_documents
-from sentence_transformers import SentenceTransformer
-import numpy as np
-
-# Global variable for caching
-_embedding_model = None
-
-def get_embedding_model():
-    """Get or create embedding model."""
-    global _embedding_model
-    if _embedding_model is None:
-        # Using a model that produces 768-dim vectors to match our database setup
-        _embedding_model = SentenceTransformer('all-mpnet-base-v2')
-    return _embedding_model
+import openai
+from app.core.config import settings
 
 async def get_study_material(query: str, user_id: str = None) -> Dict[str, Any]:
     """
@@ -30,20 +19,25 @@ async def get_study_material(query: str, user_id: str = None) -> Dict[str, Any]:
         Dict[str, Any]: Search results with context information
     """
     try:
-        # Get embedding model
-        embedding_model = get_embedding_model()
+        # Check if OpenAI API key is available
+        if not hasattr(settings, 'OPENAI_API_KEY') or not settings.OPENAI_API_KEY:
+            return {
+                "success": False,
+                "error": "OpenAI API key not configured",
+                "query": query,
+                "message": "RAG search is not available - OpenAI API key not configured"
+            }
 
-        # Create query embedding
-        query_embedding = embedding_model.encode(query)
-
-        # Pad or truncate embedding to match expected dimension (1536)
-        if len(query_embedding) < 1536:
-            query_embedding = np.pad(query_embedding, (0, 1536 - len(query_embedding)))
-        elif len(query_embedding) > 1536:
-            query_embedding = query_embedding[:1536]
+        # Create query embedding using OpenAI
+        client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+        response = client.embeddings.create(
+            input=query,
+            model="text-embedding-3-small"
+        )
+        query_embedding = response.data[0].embedding
 
         # Search using database function with user filtering
-        matches = db_search_documents(query_embedding.tolist(), match_threshold=0.3, match_count=4, google_id=user_id)
+        matches = db_search_documents(query_embedding, match_threshold=0.3, match_count=4, google_id=user_id)
 
         if not matches or len(matches) == 0:
             return {

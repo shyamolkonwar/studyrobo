@@ -22,6 +22,8 @@ export default function UploadPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedDocument[]>([]);
   const [dragActive, setDragActive] = useState(false);
+  const [courseName, setCourseName] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadStatus, setUploadStatus] = useState<{
     type: 'success' | 'error' | null;
     message: string;
@@ -126,17 +128,23 @@ export default function UploadPage() {
     setDragActive(false);
 
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleFileUpload(e.dataTransfer.files[0]);
+      setSelectedFile(e.dataTransfer.files[0]);
     }
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      handleFileUpload(e.target.files[0]);
+      setSelectedFile(e.target.files[0]);
     }
   };
 
-  const handleFileUpload = async (file: File) => {
+  const handleUpload = () => {
+    if (selectedFile && courseName.trim()) {
+      handleFileUpload(selectedFile, courseName);
+    }
+  };
+
+  const handleFileUpload = async (file: File, courseName: string) => {
     // Validate file type
     const allowedTypes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
     if (!allowedTypes.includes(file.type)) {
@@ -156,6 +164,15 @@ export default function UploadPage() {
       return;
     }
 
+    // Validate course name
+    if (!courseName.trim()) {
+      setUploadStatus({
+        type: 'error',
+        message: 'Course name is required'
+      });
+      return;
+    }
+
     setIsUploading(true);
     setUploadStatus({ type: null, message: '' });
 
@@ -167,6 +184,7 @@ export default function UploadPage() {
 
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('course_name', courseName.trim());
 
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/documents/upload`, {
         method: 'POST',
@@ -180,22 +198,13 @@ export default function UploadPage() {
         const result = await response.json();
         setUploadStatus({
           type: 'success',
-          message: `Successfully uploaded ${file.name}`
+          message: `Successfully processed ${file.name} into ${result.chunks_created} chunks`
         });
 
-        // Add to uploaded files list
-        setUploadedFiles(prev => [{
-          id: result.document_id,
-          filename: file.name,
-          file_path: result.file_path,
-          created_at: new Date().toISOString(),
-          status: 'processing'
-        }, ...prev]);
-
-        // Reload documents after a delay to show processing status
+        // Reload documents after a delay to show new chunks
         setTimeout(() => {
           loadUserDocuments();
-        }, 2000);
+        }, 1000);
 
       } else {
         const error = await response.json();
@@ -278,42 +287,92 @@ export default function UploadPage() {
 
         {/* Upload Area */}
         <Card className="p-8 mb-8">
-          <div
-            className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-              dragActive
-                ? 'border-primary bg-primary/5'
-                : 'border-border hover:border-primary/50'
-            }`}
-            onDragEnter={handleDrag}
-            onDragLeave={handleDrag}
-            onDragOver={handleDrag}
-            onDrop={handleDrop}
-          >
-            <Upload className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-            <h3 className="text-lg font-medium mb-2">Drop your files here</h3>
-            <p className="text-muted-foreground mb-4">
-              or click to browse. Supports PDF and DOCX files up to 10MB.
-            </p>
-            <Input
-              type="file"
-              accept=".pdf,.docx"
-              onChange={handleFileSelect}
-              disabled={isUploading}
-              className="hidden"
-              id="file-upload"
-            />
+          <div className="space-y-6">
+            {/* File Selection */}
+            <div
+              className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
+                dragActive
+                  ? 'border-primary bg-primary/5'
+                  : 'border-border hover:border-primary/50'
+              }`}
+              onDragEnter={handleDrag}
+              onDragLeave={handleDrag}
+              onDragOver={handleDrag}
+              onDrop={handleDrop}
+            >
+              <Upload className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+              <h3 className="text-lg font-medium mb-2">Drop your files here</h3>
+              <p className="text-muted-foreground mb-4">
+                or click to browse. Supports PDF and DOCX files up to 10MB.
+              </p>
+              <Input
+                type="file"
+                accept=".pdf,.docx"
+                onChange={handleFileSelect}
+                disabled={isUploading}
+                className="hidden"
+                id="file-upload"
+              />
+              <Button
+                onClick={() => document.getElementById('file-upload')?.click()}
+                disabled={isUploading}
+                variant="outline"
+                className="mx-auto"
+              >
+                Choose File
+              </Button>
+            </div>
+
+            {/* Selected File Display */}
+            {selectedFile && (
+              <div className="p-4 border rounded-lg bg-muted/50">
+                <div className="flex items-center gap-3">
+                  <FileText className="w-8 h-8 text-primary" />
+                  <div className="flex-1">
+                    <h4 className="font-medium">{selectedFile.name}</h4>
+                    <p className="text-sm text-muted-foreground">
+                      {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setSelectedFile(null)}
+                    className="text-red-600 hover:text-red-700"
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Course Name Input */}
+            <div className="space-y-2">
+              <label htmlFor="course-name" className="text-sm font-medium">
+                Course Name *
+              </label>
+              <Input
+                id="course-name"
+                placeholder="e.g., Computer Science 101, Data Structures"
+                value={courseName}
+                onChange={(e) => setCourseName(e.target.value)}
+                disabled={isUploading}
+              />
+            </div>
+
+            {/* Upload Button */}
             <Button
-              onClick={() => document.getElementById('file-upload')?.click()}
-              disabled={isUploading}
-              className="mx-auto"
+              onClick={handleUpload}
+              disabled={isUploading || !selectedFile || !courseName.trim()}
+              className="w-full"
             >
               {isUploading ? (
                 <>
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current mr-2"></div>
-                  Uploading...
+                  Processing Document...
                 </>
               ) : (
-                'Choose File'
+                'Upload & Process Document'
               )}
             </Button>
           </div>
