@@ -123,7 +123,7 @@ async def get_google_auth_url(user: Dict[str, Any] = Depends(verify_supabase_tok
         params = {
             "client_id": os.getenv("GOOGLE_CLIENT_ID"),
             "redirect_uri": f"{frontend_url}/auth/google/callback",
-            "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/spreadsheets",
+            "scope": "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events",
             "response_type": "code",
             "access_type": "offline",
             "prompt": "consent",
@@ -276,125 +276,106 @@ async def store_google_tokens(
 
         connection_data = {
             "user_id": user["user_id"],  # Use Supabase user ID, not Google ID
-            "app_name": "gmail",
+            "app_name": "google",  # Changed from "gmail" to "google" for both Gmail and Calendar access
             "refresh_token": token_data.get("refresh_token"),
             "access_token": token_data.get("access_token"),
             "expires_at": expires_at.isoformat()
         }
 
-        # Use upsert to handle both insert and update in one operation
+        # Handle potential conflicts by first checking for existing connections
         try:
-            # First check if a connection already exists
-            existing_response = supabase.table('user_connections').select('*').eq('user_id', user["user_id"]).eq('app_name', 'gmail').execute()
-            
-            # Handle different response formats - some return dict, others return objects
-            if isinstance(existing_response, dict):
-                # Response is a dictionary
-                existing_data = existing_response.get('data', [])
-            elif hasattr(existing_response, 'data'):
-                # Response is an object with .data attribute
-                existing_data = existing_response.data
+            # Check if there's an existing "gmail" connection that we should update to "google"
+            existing_gmail_response = supabase.table('user_connections').select('*').eq('user_id', user["user_id"]).eq('app_name', 'gmail').execute()
+
+            # Handle different response formats
+            if isinstance(existing_gmail_response, dict):
+                existing_gmail_data = existing_gmail_response.get('data', [])
+            elif hasattr(existing_gmail_response, 'data'):
+                existing_gmail_data = existing_gmail_response.data
             else:
-                # Fallback - assume response is the data directly
-                existing_data = existing_response or []
-            
-            # Check if we got data and it's not empty
-            if existing_data:
-                # Update existing connection
+                existing_gmail_data = existing_gmail_response or []
+
+            if existing_gmail_data:
+                # Update existing "gmail" connection to "google"
+                print("Found existing gmail connection, updating to google...")
                 update_response = supabase.table('user_connections').update({
+                    "app_name": "google",
                     "refresh_token": connection_data["refresh_token"],
                     "access_token": connection_data["access_token"],
                     "expires_at": connection_data["expires_at"],
                     "updated_at": datetime.datetime.utcnow().isoformat()
                 }).eq('user_id', user["user_id"]).eq('app_name', 'gmail').execute()
-                
-                # Check if update had errors by checking response format
+
+                # Check if update was successful
                 if isinstance(update_response, dict):
                     update_success = 'data' in update_response and update_response.get('data') is not None
                 elif hasattr(update_response, 'data'):
                     update_success = update_response.data is not None
                 else:
                     update_success = update_response is not None
-                
+
                 if update_success:
-                    print(f"Update successful: {update_response}")
+                    print(f"Successfully updated existing gmail connection to google: {update_response}")
                 else:
-                    print(f"Update failed - no data returned")
-                    # Try insert instead
-                    insert_response = supabase.table('user_connections').insert(connection_data).execute()
-                    
-                    # Check if insert had errors
-                    if isinstance(insert_response, dict):
-                        insert_success = 'data' in insert_response and insert_response.get('data') is not None
-                    elif hasattr(insert_response, 'data'):
-                        insert_success = insert_response.data is not None
-                    else:
-                        insert_success = insert_response is not None
-                    
-                    if insert_success:
-                        print(f"Insert successful after update failed: {insert_response}")
-                    else:
-                        raise HTTPException(status_code=500, detail=f"Both update and insert failed")
+                    raise HTTPException(status_code=500, detail="Failed to update existing gmail connection")
             else:
-                # Insert new connection
-                insert_response = supabase.table('user_connections').insert(connection_data).execute()
-                
-                # Check if insert had errors
-                if isinstance(insert_response, dict):
-                    insert_success = 'data' in insert_response and insert_response.get('data') is not None
-                elif hasattr(insert_response, 'data'):
-                    insert_success = insert_response.data is not None
+                # No existing gmail connection, check for google connection
+                existing_google_response = supabase.table('user_connections').select('*').eq('user_id', user["user_id"]).eq('app_name', 'google').execute()
+
+                # Handle different response formats
+                if isinstance(existing_google_response, dict):
+                    existing_google_data = existing_google_response.get('data', [])
+                elif hasattr(existing_google_response, 'data'):
+                    existing_google_data = existing_google_response.data
                 else:
-                    insert_success = insert_response is not None
-                
-                if insert_success:
-                    print(f"Insert successful: {insert_response}")
-                else:
-                    print(f"Insert failed - trying update instead")
-                    # Try update instead
+                    existing_google_data = existing_google_response or []
+
+                if existing_google_data:
+                    # Update existing google connection
+                    print("Updating existing google connection...")
                     update_response = supabase.table('user_connections').update({
                         "refresh_token": connection_data["refresh_token"],
                         "access_token": connection_data["access_token"],
                         "expires_at": connection_data["expires_at"],
                         "updated_at": datetime.datetime.utcnow().isoformat()
-                    }).eq('user_id', user["user_id"]).eq('app_name', 'gmail').execute()
-                    
-                    # Check if update had errors
+                    }).eq('user_id', user["user_id"]).eq('app_name', 'google').execute()
+
+                    # Check if update was successful
                     if isinstance(update_response, dict):
                         update_success = 'data' in update_response and update_response.get('data') is not None
                     elif hasattr(update_response, 'data'):
                         update_success = update_response.data is not None
                     else:
                         update_success = update_response is not None
-                    
+
                     if update_success:
-                        print(f"Update successful after insert failed: {update_response}")
+                        print(f"Successfully updated existing google connection: {update_response}")
                     else:
-                        raise HTTPException(status_code=500, detail=f"Both insert and update failed")
-                
+                        raise HTTPException(status_code=500, detail="Failed to update existing google connection")
+                else:
+                    # No existing connection, insert new one
+                    print("Inserting new google connection...")
+                    insert_response = supabase.table('user_connections').insert(connection_data).execute()
+
+                    # Check if insert was successful
+                    if isinstance(insert_response, dict):
+                        insert_success = 'data' in insert_response and insert_response.get('data') is not None
+                    elif hasattr(insert_response, 'data'):
+                        insert_success = insert_response.data is not None
+                    else:
+                        insert_success = insert_response is not None
+
+                    if insert_success:
+                        print(f"Successfully inserted new google connection: {insert_response}")
+                    else:
+                        raise HTTPException(status_code=500, detail="Failed to insert new google connection")
+
+        except HTTPException:
+            raise
         except Exception as db_error:
             error_str = str(db_error)
             print(f"Database operation failed: {error_str}")
-            
-            # If we still have issues, try upsert as final fallback
-            try:
-                upsert_response = supabase.table('user_connections').upsert(connection_data, onConflict='user_id,app_name').execute()
-                
-                # Check if upsert had errors
-                if isinstance(upsert_response, dict):
-                    upsert_success = 'data' in upsert_response and upsert_response.get('data') is not None
-                elif hasattr(upsert_response, 'data'):
-                    upsert_success = upsert_response.data is not None
-                else:
-                    upsert_success = upsert_response is not None
-                
-                if upsert_success:
-                    print(f"Upsert fallback successful: {upsert_response}")
-                else:
-                    raise HTTPException(status_code=500, detail=f"Upsert failed: no data returned")
-            except Exception as upsert_error:
-                print(f"Upsert fallback failed: {str(upsert_error)}")
-                raise HTTPException(status_code=500, detail=f"Failed to store connection: {error_str}")
+            raise HTTPException(status_code=500, detail=f"Failed to store connection: {error_str}")
 
         return {"message": "Tokens stored successfully"}
 
@@ -404,12 +385,12 @@ async def store_google_tokens(
 @router.get("/google-tokens")
 async def get_google_tokens(user: Dict[str, Any] = Depends(verify_supabase_token)):
     """
-    Check if user has Gmail connection in the database.
+    Check if user has Google services connection in the database.
     """
     try:
-        # Check if user has Gmail connection using Supabase user ID
+        # Check if user has Google connection using Supabase user ID
         from app.core.supabase_client import supabase
-        response = supabase.table('user_connections').select('*').eq('user_id', user["user_id"]).eq('app_name', 'gmail').execute()
+        response = supabase.table('user_connections').select('*').eq('user_id', user["user_id"]).eq('app_name', 'google').execute()
 
         # Handle different response formats - some return dict, others return objects
         if isinstance(response, dict):
@@ -426,8 +407,8 @@ async def get_google_tokens(user: Dict[str, Any] = Depends(verify_supabase_token
         if not response_data:
             return {
                 "connected": False,
-                "app_name": "gmail",
-                "message": "Gmail not connected"
+                "app_name": "google",
+                "message": "Google services not connected"
             }
 
         # Handle both single record and array responses
@@ -436,17 +417,17 @@ async def get_google_tokens(user: Dict[str, Any] = Depends(verify_supabase_token
         # Return success (don't expose actual tokens)
         return {
             "connected": True,
-            "app_name": "gmail",
+            "app_name": "google",
             "connected_at": connection_data.get("created_at") if isinstance(connection_data, dict) else None,
             "updated_at": connection_data.get("updated_at") if isinstance(connection_data, dict) else None
         }
 
     except Exception as e:
         # Return a graceful response instead of throwing 500
-        print(f"Error checking Gmail connection: {str(e)}")
+        print(f"Error checking Google connection: {str(e)}")
         return {
             "connected": False,
-            "app_name": "gmail",
+            "app_name": "google",
             "error": f"Failed to check connection: {str(e)}"
         }
 

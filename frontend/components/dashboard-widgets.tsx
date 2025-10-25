@@ -44,6 +44,20 @@ interface GmailInfo {
   }>;
 }
 
+interface CalendarInfo {
+  events: Array<{
+    id: string;
+    title: string;
+    time: string;
+    location: string;
+    description: string;
+    is_all_day: boolean;
+    htmlLink: string;
+  }>;
+  connected: boolean;
+  total_count: number;
+}
+
 interface AttendanceRecord {
   total_classes: number;
   attended_classes: number;
@@ -54,6 +68,7 @@ export default function DashboardWidgets() {
   const [user, setUser] = useState<any>(null);
   const [userDocuments, setUserDocuments] = useState<UserDocument[]>([]);
   const [gmailInfo, setGmailInfo] = useState<GmailInfo | null>(null);
+  const [calendarInfo, setCalendarInfo] = useState<CalendarInfo | null>(null);
   const [attendance, setAttendance] = useState<AttendanceRecord | null>(null);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -75,6 +90,7 @@ export default function DashboardWidgets() {
     if (user) {
       loadUserDocuments();
       checkGmailConnection();
+      loadCalendarEvents();
       loadAttendanceStats();
     }
   }, [user]);
@@ -116,6 +132,26 @@ export default function DashboardWidgets() {
       }
     } catch (error) {
       console.error('Error checking Gmail connection:', error);
+    }
+  };
+
+  const loadCalendarEvents = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
+
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/calendar/agenda`, {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setCalendarInfo(data);
+      }
+    } catch (error) {
+      console.error('Error loading calendar events:', error);
     }
   };
 
@@ -246,6 +282,35 @@ export default function DashboardWidgets() {
       }
     } catch (error) {
       console.error('Error deleting document:', error);
+    }
+  };
+
+  const handleGoogleServicesConnect = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session) {
+        alert('Please log in first');
+        return;
+      }
+
+      // Get Google OAuth URL for services (includes both Gmail and Calendar scopes)
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/google-auth-url`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+      });
+
+      if (response.ok) {
+        const { auth_url } = await response.json();
+        window.location.href = auth_url;
+      } else {
+        alert('Failed to connect Google services. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error connecting Google services:', error);
+      alert('Failed to connect Google services. Please try again.');
     }
   };
 
@@ -417,13 +482,23 @@ export default function DashboardWidgets() {
               {gmailInfo ? (
                 <Badge variant="default" className="mt-2 bg-brand-green">Connected</Badge>
               ) : (
-                <Button size="sm" variant="outline" className="mt-2">Connect</Button>
+                <Button size="sm" variant="outline" className="mt-2" onClick={handleGoogleServicesConnect}>Connect</Button>
               )}
             </div>
-            <div className="text-center p-4 rounded-lg border border-border bg-muted hover:bg-muted/80 transition-all">
-              <Calendar className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
+            <div className={`text-center p-4 rounded-lg border transition-all ${
+              calendarInfo?.connected
+                ? 'border-brand-green bg-brand-green/10'
+                : 'border-border bg-muted hover:bg-muted/80'
+            }`}>
+              <Calendar className={`w-8 h-8 mx-auto mb-2 ${
+                calendarInfo?.connected ? 'text-brand-green' : 'text-muted-foreground'
+              }`} />
               <p className="text-sm font-medium font-heading mt-1">Calendar</p>
-              <Button size="sm" variant="outline" className="mt-2">Connect</Button>
+              {calendarInfo?.connected ? (
+                <Badge variant="default" className="mt-2 bg-brand-green">Connected</Badge>
+              ) : (
+                <Button size="sm" variant="outline" className="mt-2" onClick={handleGoogleServicesConnect}>Connect</Button>
+              )}
             </div>
           </div>
         </Card>
@@ -435,38 +510,44 @@ export default function DashboardWidgets() {
           <Clock className="w-5 h-5 text-brand-blue" />
           Today's Schedule
         </h3>
-        <div className="space-y-3">
-          <div className="flex items-center space-x-4 p-3 hover:bg-muted rounded-lg transition-colors">
-            <span className="text-sm font-semibold font-heading text-brand-blue min-w-fit">10:00 AM</span>
-            <div className="w-8 h-8 bg-brand-blue/10 rounded-full flex items-center justify-center">
-              <BookOpen className="w-4 h-4 text-brand-blue" />
-            </div>
-            <div>
-              <p className="font-medium font-heading">CS101 Lecture</p>
-              <p className="text-sm text-muted-foreground font-body">Room 301</p>
-            </div>
+        {calendarInfo && calendarInfo.events && calendarInfo.events.length > 0 ? (
+          <div className="space-y-3">
+            {calendarInfo.events.map((event, index) => (
+              <div key={event.id} className="flex items-center space-x-4 p-3 hover:bg-muted rounded-lg transition-colors">
+                <span className={`text-sm font-semibold font-heading min-w-fit ${
+                  index % 3 === 0 ? 'text-brand-blue' :
+                  index % 3 === 1 ? 'text-brand-yellow' : 'text-brand-violet'
+                }`}>
+                  {event.time}
+                </span>
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                  index % 3 === 0 ? 'bg-brand-blue/10' :
+                  index % 3 === 1 ? 'bg-brand-yellow/10' : 'bg-brand-violet/10'
+                }`}>
+                  {index % 3 === 0 ? <BookOpen className="w-4 h-4 text-brand-blue" /> :
+                   index % 3 === 1 ? <Users className="w-4 h-4 text-brand-yellow" /> :
+                   <Brain className="w-4 h-4 text-brand-violet" />}
+                </div>
+                <div className="flex-1">
+                  <p className="font-medium font-heading">{event.title}</p>
+                  {event.location && (
+                    <p className="text-sm text-muted-foreground font-body">{event.location}</p>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
-          <div className="flex items-center space-x-4 p-3 hover:bg-muted rounded-lg transition-colors">
-            <span className="text-sm font-semibold font-heading text-brand-yellow min-w-fit">12:00 PM</span>
-            <div className="w-8 h-8 bg-brand-yellow/10 rounded-full flex items-center justify-center">
-              <Users className="w-4 h-4 text-brand-yellow" />
-            </div>
-            <div>
-              <p className="font-medium font-heading">Lunch Break</p>
-              <p className="text-sm text-muted-foreground font-body">Campus Cafeteria</p>
-            </div>
+        ) : (
+          <div className="text-center py-8">
+            <Calendar className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+            <p className="text-muted-foreground font-body">
+              {calendarInfo?.connected === false
+                ? "Connect your Google Calendar to see your schedule"
+                : "No upcoming events in your calendar"
+              }
+            </p>
           </div>
-          <div className="flex items-center space-x-4 p-3 hover:bg-muted rounded-lg transition-colors">
-            <span className="text-sm font-semibold font-heading text-brand-violet min-w-fit">3:00 PM</span>
-            <div className="w-8 h-8 bg-brand-violet/10 rounded-full flex items-center justify-center">
-              <Brain className="w-4 h-4 text-brand-violet" />
-            </div>
-            <div>
-              <p className="font-medium font-heading">Study Session</p>
-              <p className="text-sm text-muted-foreground font-body">Library</p>
-            </div>
-          </div>
-        </div>
+        )}
       </Card>
     </div>
   );

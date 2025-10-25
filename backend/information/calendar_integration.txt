@@ -1,0 +1,131 @@
+## Phase 1: Enable the API (Google Cloud)
+
+Before you can do anything, you must tell Google your app wants to use the Calendar.
+
+Enable API: Go to your Google Cloud Console. In the "APIs & Services" -> "Library," search for "Google Calendar API" and click "Enable".
+
+Add Scopes: Go to the "OAuth consent screen" page.
+
+Click "Edit App".
+
+Go to the "Scopes" section.
+
+Click "Add or Remove Scopes."
+
+Find and add these two scopes:
+
+.../auth/calendar.readonly (To read events for the dashboard)
+
+.../auth/calendar.events (To create/edit events from the chat)
+
+Save and continue.
+
+## Phase 2: Update Your "Connect Apps" Flow (Frontend)
+
+You don't want a separate "Connect Calendar" button. This is bad UX. Since Gmail and Calendar are both Google services, you should have one "Connect Google" button that gets all the permissions you need (including the Refresh Token) in a single flow.
+
+Update the UI:
+
+In your "Connect Apps" dialog, rename the "Gmail" card to "Google Suite" or just "Google".
+
+Update the description to: "Connect your Google account to manage emails, calendar events, and more."
+
+Update the onClick Handler:
+
+Find the handleConnectGmail (or whatever you called it) function. Rename it to handleConnectGoogle.
+
+In your supabase.auth.signInWithOAuth call, you must add the new calendar scopes to the scopes array.
+
+Your scopes option should now look like this:
+
+JavaScript
+scopes: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events'
+Crucially, keep the access_type: 'offline' and prompt: 'consent' options just as you had them. This ensures you get the Refresh Token that covers all these new permissions.
+
+Update Supabase user_connections:
+
+When your Edge Function (or backend) saves the token, make sure it saves it with a generic app_name, like "google" instead of "gmail".
+
+This one "google" row in your user_connections table will now store the Refresh Token that has permission for both Gmail and Calendar.
+
+## Phase 3: Create the Calendar Tools (FastAPI Backend)
+
+This is where you build the Python functions that your AI agent will use. The logic is identical to your Gmail tool: fetch the "google" refresh token, get a new access token, and then call the API.
+
+You'll need the Google API client library (which you should already have for Gmail): pip install google-api-python-client google-auth-oauthlib
+
+Here are the two main tools you should build:
+
+Tool 1: get_upcoming_events
+
+Purpose: To fetch the user's next 5-10 calendar events. This will power your "Today's Agenda" widget.
+
+Agent Description: "Use this tool to get a list of the user's upcoming calendar events, including meetings, lectures, and deadlines."
+
+Backend Logic:
+
+Your tool function is called (e.g., get_upcoming_events(user_id)).
+
+It queries your user_connections table for the "google" refresh token for that user_id.
+
+It exchanges the refresh token for a fresh access token.
+
+It initializes the Calendar service: service = build('calendar', 'v3', credentials=creds).
+
+It calls the service.events().list() method.
+
+Key Parameters for list():
+
+calendarId='primary': To get the user's main calendar.
+
+timeMin=datetime.utcnow().isoformat() + 'Z': To get events starting from now.
+
+maxResults=10: To get the next 10 events.
+
+singleEvents=True: To expand recurring events.
+
+orderBy='startTime': To get them in chronological order.
+
+The function then parses the items from the response, extracts the summary (title), start['dateTime'], and end['dateTime'] for each, and returns a clean JSON list.
+
+Tool 2: Calendar
+
+Purpose: To allow the AI to create new events (e.g., "AI, schedule a study session for my 'CS101' final tomorrow at 3 PM").
+
+Agent Description: "Use this tool to create a new calendar event. You must provide a title, a start time, and an end time in ISO 8601 format."
+
+Backend Logic:
+
+The agent calls this tool with arguments: Calendar(user_id, title, start_time, end_time).
+
+It gets the credentials just like the get_upcoming_events tool.
+
+It builds an event JSON object in the format Google requires. (Your agent's prompt must be very specific about getting the start_time and end_time in YYYY-MM-DDTHH:MM:SS format. You may also need to get the user's timeZone from their profile).
+
+It calls the service.events().insert(calendarId='primary', body=event_body) method.
+
+It returns a success message: "The event 'Study Session' has been created."
+
+## Phase 4: Integrate with Agent & Dashboard
+
+Now you just need to connect your new tools.
+
+Agent (FastAPI):
+
+Add the function definitions for get_upcoming_events and Calendar to the list of tools your main AI agent knows about.
+
+Update your agent's system prompt to mention its new ability: "You are a student mentor... You can read and manage the user's Gmail inbox and Google Calendar to help them stay organized."
+
+Dashboard (Next.js):
+
+Your "Today's Agenda" widget is no longer mock data.
+
+Recommendation: Don't have the dashboard chat with the AI to get the agenda. That's slow.
+
+Instead, create a new, dedicated endpoint in your FastAPI backend, like /api/v1/agenda.
+
+When your Next.js dashboard loads, it will fetch from this /api/v1/agenda endpoint.
+
+This endpoint will not talk to an LLM. It will directly call your get_upcoming_events tool's logic and immediately return the JSON list of events.
+
+This is much faster, cheaper, and more reliable. Your dashboard will load instantly with the user's real calendar data.

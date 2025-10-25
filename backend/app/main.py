@@ -1,7 +1,19 @@
+import logging
+import warnings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.api import api_router
 from app.core.config import settings
+
+# Configure logging to suppress unwanted logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
+
+# Suppress pypdf cryptography warning
+warnings.filterwarnings("ignore", message="ARC4 has been moved")
+
+# Set up basic logging configuration
+logging.basicConfig(level=logging.INFO, format='%(levelname)s:     %(message)s')
 
 app = FastAPI(title=settings.PROJECT_NAME)
 

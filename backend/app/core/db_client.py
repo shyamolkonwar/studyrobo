@@ -180,21 +180,35 @@ def clear_messages(user_id: int):
 # Conversation management functions
 def create_conversation(google_id: str, title: str = "New Chat") -> str:
     """Create a new conversation for a user and return the conversation ID"""
+    print(f"DEBUG: create_conversation called with google_id: {google_id}, title: {title}")
+
     # First get user_id from google_id
     user_query = "SELECT id FROM users WHERE google_id = %s"
+    print(f"DEBUG: Executing user lookup query: {user_query} with param: {google_id}")
     result = execute_query(user_query, (google_id,))
+    print(f"DEBUG: User lookup result: {result}")
+
     if not result:
+        print(f"DEBUG: No user found for Google ID: {google_id}")
         raise ValueError(f"User not found for Google ID: {google_id}")
 
     user_id = result[0]['id']
+    print(f"DEBUG: Found user_id: {user_id}")
 
     # Create conversation
     conv_query = "INSERT INTO conversations (user_id, title) VALUES (%s, %s) RETURNING id"
+    print(f"DEBUG: Executing conversation insert query: {conv_query} with params: ({user_id}, {title})")
     result = execute_query(conv_query, (user_id, title))
-    return result[0]['id'] if result else None
+    print(f"DEBUG: Conversation insert result: {result}")
+
+    conversation_id = result[0]['id'] if result else None
+    print(f"DEBUG: Returning conversation_id: {conversation_id}")
+    return conversation_id
 
 def get_user_conversations(google_id: str) -> List[Dict[str, Any]]:
     """Get all conversations for a user"""
+    print(f"DEBUG: get_user_conversations called with google_id: {google_id}")
+
     query = """
     SELECT c.id, c.title, c.created_at::text as created_at,
            COUNT(m.id) as message_count
@@ -205,7 +219,10 @@ def get_user_conversations(google_id: str) -> List[Dict[str, Any]]:
     GROUP BY c.id, c.title, c.created_at
     ORDER BY c.created_at DESC
     """
-    return execute_query(query, (google_id,)) or []
+    print(f"DEBUG: Executing conversations query: {query} with param: {google_id}")
+    result = execute_query(query, (google_id,)) or []
+    print(f"DEBUG: Conversations query result: {result}")
+    return result
 
 def delete_conversation(conversation_id: str, google_id: str):
     """Delete a conversation and all its messages"""

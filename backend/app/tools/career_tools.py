@@ -3,8 +3,11 @@ import json
 import asyncio
 from typing import Dict, Any
 import tavily
+from dotenv import load_dotenv
 
-def get_career_insights(field: str) -> Dict[str, Any]:
+load_dotenv()
+
+async def get_career_insights(field: str) -> Dict[str, Any]:
     """
     Search for career insights and job market trends using Tavily search API.
 
@@ -46,11 +49,12 @@ def get_career_insights(field: str) -> Dict[str, Any]:
         # Search for career insights
         search_query = f"latest career insights job market trends salary opportunities for {field}"
 
-        # Perform search
-        # For simplicity in testing, do synchronous call
-        response = tavily_client.search(search_query, search_depth="advanced", include_answer=True)
+        # Perform search asynchronously
+        search_response = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: tavily_client.search(query=search_query, search_depth="advanced", include_answer=True)
+        )
 
-        if not response or not response.get('results'):
+        if not search_response or not search_response.get('results'):
             return {
                 "success": False,
                 "error": "No search results returned",
@@ -58,21 +62,37 @@ def get_career_insights(field: str) -> Dict[str, Any]:
                 "message": f"No career insights found for: {field}"
             }
 
-        # Extract relevant information
-        results = response.get('results', [])
+        # Get search results - Tavily search already provides good content snippets
+        search_results = search_response.get('results', [])
+
+        # Extract URLs from top search results for processing steps
+        urls_to_extract = [result.get('url') for result in search_results[:3] if result.get('url')]
+
+        # Combine content from top search results to create rich context
+        extracted_content = ""
+        if search_results:
+            content_parts = []
+            for result in search_results[:5]:  # Use top 5 results for better context
+                title = result.get('title', '')
+                content = result.get('content', '')
+                url = result.get('url', '')
+                if content:
+                    content_parts.append(f"Title: {title}\nContent: {content}\nSource: {url}")
+
+            extracted_content = "\n\n---\n\n".join(content_parts)
 
         # Format the response
         insights_list = []
 
-        # Process top 3 results
-        for i, result in enumerate(results[:3]):
+        # Process top 3 search results with enhanced content
+        for i, result in enumerate(search_results[:3]):
             title = result.get('title', 'Career Insight')
             content = result.get('content', '')
             url = result.get('url', '')
 
             insights_list.append({
                 "title": title,
-                "summary": content[:200] + '...' if len(content) > 200 else content,
+                "summary": content[:300] + '...' if len(content) > 300 else content,
                 "source": url,
                 "relevance_score": 3 - i  # Simple scoring based on position
             })
@@ -97,15 +117,44 @@ def get_career_insights(field: str) -> Dict[str, Any]:
         insights = {
             "field": field,
             "query": search_query,
-            "results_count": len(results),
-            "insights": insights_list
+            "results_count": len(search_results),
+            "insights": insights_list,
+            "extracted_content": extracted_content  # Full extracted content for LLM context
         }
+
+        # Create processing steps for frontend animation
+        processing_steps = [
+            {
+                "step": "thinking",
+                "message": "Analyzing your career question...",
+                "duration": 800
+            },
+            {
+                "step": "searching",
+                "message": f"Searching for latest career insights on {field}...",
+                "duration": 1500
+            },
+            {
+                "step": "extracting",
+                "message": "Extracting information from career resources...",
+                "urls": urls_to_extract[:3],  # Show first 3 URLs being processed
+                "content_snippets": [result.get('content', '')[:150] + '...' for result in search_results[:3]],
+                "duration": 2000
+            },
+            {
+                "step": "generating",
+                "message": "Generating personalized career advice...",
+                "duration": 1200
+            }
+        ]
 
         return {
             "success": True,
             "query": field,
             "field": field,
             "insights": insights,
+            "extracted_content": extracted_content,  # Include extracted content in top level for easy access
+            "processing_steps": processing_steps,  # Add processing steps for frontend animation
             "message": f"Found career insights for: {field}",
             "search_performed": True
         }

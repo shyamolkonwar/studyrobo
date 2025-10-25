@@ -17,8 +17,11 @@ interface Message {
 }
 
 interface LoadingIndicator {
-  type: 'gmail' | 'search' | 'general';
+  type: 'gmail' | 'search' | 'general' | 'career';
   message: string;
+  step?: string;
+  urls?: string[];
+  contentSnippets?: string[];
 }
 
 export default function ChatPage() {
@@ -28,6 +31,7 @@ export default function ChatPage() {
   const [loadingIndicators, setLoadingIndicators] = useState<LoadingIndicator[]>([]);
   const [user, setUser] = useState<any>(null);
   const [conversation, setConversation] = useState<any>(null);
+  const [hasLoadedMessages, setHasLoadedMessages] = useState(false);
 
   const params = useParams();
   const router = useRouter();
@@ -99,10 +103,10 @@ export default function ChatPage() {
   }, [router]);
 
   useEffect(() => {
-    if (user && conversationId) {
+    if (user && conversationId && messages.length === 0) {
       loadMessages();
     }
-  }, [user, conversationId]);
+  }, [user, conversationId, messages.length]);
 
   const loadMessages = async () => {
     try {
@@ -117,7 +121,12 @@ export default function ChatPage() {
 
       if (response.ok) {
         const data = await response.json();
-        setMessages(data || []);
+        // Only update messages if we actually got data from the server
+        // This prevents overwriting local messages with empty arrays for new conversations
+        if (data && data.length > 0) {
+          setMessages(data);
+        }
+        setHasLoadedMessages(true); // Mark that we've attempted to load messages
       }
     } catch (error) {
       console.error('Error loading messages:', error);
@@ -198,6 +207,19 @@ export default function ChatPage() {
     // Parse the response for any special formatting
     let processedResponse = response;
 
+    // Check if response contains career processing steps
+    try {
+      const responseData = JSON.parse(response);
+      if (responseData.processing_steps) {
+        // Show career processing animation
+        await showCareerProcessingAnimation(responseData.processing_steps);
+        addFormattedMessage(processedResponse, 'career');
+        return;
+      }
+    } catch (e) {
+      // Not JSON, continue with normal processing
+    }
+
     // Check if response contains email data or other structured data
     if (response.includes('📧') || response.includes('EMAILS:')) {
       addLoadingIndicator('gmail', 'Checking your emails...');
@@ -224,7 +246,27 @@ export default function ChatPage() {
     }
   };
 
-  const addFormattedMessage = (content: string, type: 'text' | 'emails' | 'resources') => {
+  const showCareerProcessingAnimation = async (steps: any[]) => {
+    for (const step of steps) {
+      const indicator: LoadingIndicator = {
+        type: 'career',
+        message: step.message,
+        step: step.step,
+        urls: step.urls,
+        contentSnippets: step.content_snippets
+      };
+
+      setLoadingIndicators(prev => [...prev, indicator]);
+
+      // Wait for the step duration
+      await new Promise(resolve => setTimeout(resolve, step.duration));
+
+      // Remove this step
+      setLoadingIndicators(prev => prev.filter(ind => ind.step !== step.step));
+    }
+  };
+
+  const addFormattedMessage = (content: string, type: 'text' | 'emails' | 'resources' | 'career') => {
     const aiMessage: Message = {
       id: (Date.now() + 1).toString(),
       role: 'ai',
@@ -291,7 +333,7 @@ export default function ChatPage() {
         </header>
 
         <main className="flex-1 overflow-y-auto p-4">
-          {messages.length === 0 ? (
+          {messages.length === 0 && hasLoadedMessages ? (
             <div className="flex items-center justify-center h-full">
               <Card className="p-8 max-w-2xl w-full text-center">
                 <h2 className="text-xl font-semibold mb-4">
@@ -334,13 +376,62 @@ export default function ChatPage() {
               {/* Loading Indicators */}
               {loadingIndicators.map((indicator, index) => (
                 <div key={index} className="flex justify-start">
-                  <Card className="p-4 bg-card">
-                    <div className="flex items-center space-x-2">
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-                      <span className="text-sm text-muted-foreground">
-                        {indicator.message}
-                      </span>
-                    </div>
+                  <Card className="p-4 bg-card max-w-[80%]">
+                    {indicator.type === 'career' ? (
+                      <div className="space-y-3">
+                        <div className="flex items-center space-x-2">
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                          <span className="text-sm font-medium text-primary">
+                            {indicator.message}
+                          </span>
+                        </div>
+
+                        {indicator.step === 'extracting' && indicator.urls && indicator.urls.length > 0 && (
+                          <div className="space-y-2">
+                            <span className="text-xs text-muted-foreground">Processing sources:</span>
+                            {indicator.urls.map((url, urlIndex) => (
+                              <div key={urlIndex} className="flex items-center space-x-2 p-2 bg-muted/50 rounded">
+                                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                                <span className="text-xs font-mono text-blue-600 truncate">{url}</span>
+                              </div>
+                            ))}
+
+                            {indicator.contentSnippets && indicator.contentSnippets.length > 0 && (
+                              <div className="mt-3 space-y-2">
+                                <span className="text-xs text-muted-foreground">Extracting content:</span>
+                                {indicator.contentSnippets.map((snippet, snippetIndex) => (
+                                  <div key={snippetIndex} className="p-2 bg-muted/30 rounded text-xs italic">
+                                    "{snippet}"
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {indicator.step === 'searching' && (
+                          <div className="flex items-center space-x-2">
+                            <div className="animate-bounce w-2 h-2 bg-blue-500 rounded-full"></div>
+                            <div className="animate-bounce w-2 h-2 bg-blue-500 rounded-full" style={{animationDelay: '0.1s'}}></div>
+                            <div className="animate-bounce w-2 h-2 bg-blue-500 rounded-full" style={{animationDelay: '0.2s'}}></div>
+                          </div>
+                        )}
+
+                        {indicator.step === 'generating' && (
+                          <div className="flex items-center space-x-2">
+                            <div className="animate-pulse w-3 h-3 bg-purple-500 rounded-full"></div>
+                            <span className="text-xs text-muted-foreground">Synthesizing career insights...</span>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex items-center space-x-2">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                        <span className="text-sm text-muted-foreground">
+                          {indicator.message}
+                        </span>
+                      </div>
+                    )}
                   </Card>
                 </div>
               ))}

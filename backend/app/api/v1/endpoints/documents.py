@@ -14,7 +14,7 @@ from pypdf import PdfReader
 from docx import Document
 import openai
 import numpy as np
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 router = APIRouter()
 

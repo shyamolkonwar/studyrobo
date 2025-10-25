@@ -27,8 +27,8 @@ async def get_unread_emails(user_id: str, max_results: int = 10) -> Dict[str, An
         # Get Supabase client to query user_connections table
         from app.core.supabase_client import supabase
 
-        # Query the user's Gmail connection using Google ID (UUID)
-        response = supabase.table('user_connections').select('*').eq('user_id', user_id).eq('app_name', 'gmail').single().execute()
+        # Query the user's Google connection using Google ID (UUID)
+        response = supabase.table('user_connections').select('*').eq('user_id', user_id).eq('app_name', 'google').single().execute()
 
         if not response.get('data'):
             return {
@@ -242,8 +242,8 @@ def check_gmail_connection(user_id: str) -> Dict[str, Any]:
         # Get Supabase client to query user_connections table
         from app.core.supabase_client import supabase
 
-        # Query the user's Gmail connection using Google ID (UUID)
-        response = supabase.table('user_connections').select('*').eq('user_id', user_id).eq('app_name', 'gmail').single().execute()
+        # Query the user's Google connection using Google ID (UUID)
+        response = supabase.table('user_connections').select('*').eq('user_id', user_id).eq('app_name', 'google').single().execute()
 
         if not response.get('data'):
             return {

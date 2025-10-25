@@ -27,6 +27,7 @@ export default function Sidebar({ currentConversationId }: { currentConversation
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [user, setUser] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [hasLoadedConversations, setHasLoadedConversations] = useState(false);
   const [apps, setApps] = useState<AppConnection[]>([
     {
       id: 'gmail',
@@ -43,7 +44,7 @@ export default function Sidebar({ currentConversationId }: { currentConversation
     const checkUser = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       setUser(session?.user || null);
-      if (session?.user) {
+      if (session?.user && !hasLoadedConversations) {
         loadConversations();
       } else {
         setIsLoading(false);
@@ -54,16 +55,17 @@ export default function Sidebar({ currentConversationId }: { currentConversation
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user || null);
-      if (session?.user) {
+      if (session?.user && !hasLoadedConversations) {
         loadConversations();
-      } else {
+      } else if (!session?.user) {
         setConversations([]);
         setIsLoading(false);
+        setHasLoadedConversations(false);
       }
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [hasLoadedConversations]);
 
   const loadConversations = async () => {
     try {
@@ -78,6 +80,7 @@ export default function Sidebar({ currentConversationId }: { currentConversation
       if (response.ok) {
         const data = await response.json();
         setConversations(data);
+        setHasLoadedConversations(true);
       }
     } catch (error) {
       console.error('Error loading conversations:', error);
@@ -310,7 +313,6 @@ export default function Sidebar({ currentConversationId }: { currentConversation
               variant="outline"
               size="sm"
               className="w-full"
-              onClick={checkAppConnections}
             >
               <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />

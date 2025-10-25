@@ -7,16 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends, Path
 from typing import List, Dict, Any
 from pydantic import BaseModel
 from app.api.v1.endpoints.auth.google import verify_supabase_token
-from app.core.db_client import (
-    create_user,
-    get_user_by_google_id,
-    create_conversation,
-    get_user_conversations,
-    delete_conversation as db_delete_conversation,
-    update_conversation_title,
-    get_messages_by_conversation,
-    add_message_to_conversation
-)
+from app.core.supabase_client import get_supabase_service_client
 
 router = APIRouter()
 
@@ -45,10 +36,45 @@ async def create_new_conversation(
         if not google_id:
             raise HTTPException(status_code=400, detail="Google ID not found")
 
+        # Get service client for admin operations
+        service_client = get_supabase_service_client()
+
+        # Ensure user exists in our database before creating conversation
+        try:
+            user_response = service_client.table('users').select('*').eq('google_id', google_id).execute()
+            existing_user = user_response.data[0] if user_response.data else None
+        except Exception as db_error:
+            existing_user = None
+
+        if not existing_user:
+            # Create user record if it doesn't exist
+            try:
+                user_data = {
+                    "google_id": google_id,
+                    "email": user.get("email", ""),
+                    "name": user.get("email", "").split("@")[0] if user.get("email") else ""
+                }
+                user_response = service_client.table('users').insert(user_data).execute()
+                db_user = user_response.data[0] if user_response.data else None
+            except Exception as create_error:
+                raise HTTPException(status_code=500, detail=f"Failed to create user: {str(create_error)}")
+
         # Create conversation in database
-        conversation_id = create_conversation(google_id, conversation.title)
+        try:
+            user_id = existing_user['id'] if existing_user else db_user['id']
+            conversation_data = {
+                "user_id": user_id,
+                "title": conversation.title
+            }
+            conv_response = service_client.table('conversations').insert(conversation_data).execute()
+            conversation_record = conv_response.data[0] if conv_response.data else None
+            conversation_id = str(conversation_record['id']) if conversation_record else None
+        except Exception as conv_error:
+            raise HTTPException(status_code=500, detail=f"Failed to create conversation: {str(conv_error)}")
 
         return {"conversation_id": conversation_id}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -67,10 +93,54 @@ async def list_conversations(
         if not google_id:
             raise HTTPException(status_code=400, detail="Google ID not found")
 
+        # Get service client for admin operations
+        service_client = get_supabase_service_client()
+
+        # Ensure user exists in our database
+        try:
+            user_response = service_client.table('users').select('*').eq('google_id', google_id).execute()
+            existing_user = user_response.data[0] if user_response.data else None
+        except Exception as db_error:
+            existing_user = None
+
+        if not existing_user:
+            # Create user record if it doesn't exist
+            try:
+                user_data = {
+                    "google_id": google_id,
+                    "email": user.get("email", ""),
+                    "name": user.get("email", "").split("@")[0] if user.get("email") else ""
+                }
+                user_response = service_client.table('users').insert(user_data).execute()
+                db_user = user_response.data[0] if user_response.data else None
+            except Exception as create_error:
+                raise HTTPException(status_code=500, detail=f"Failed to create user: {str(create_error)}")
+
         # Get conversations from database
-        conversations = get_user_conversations(google_id)
+        try:
+            user_id = existing_user['id'] if existing_user else db_user['id']
+            conv_response = service_client.table('conversations').select('id, title, created_at').eq('user_id', user_id).order('created_at', desc=True).execute()
+
+            conversations = []
+            if conv_response.data:
+                for conv in conv_response.data:
+                    # Count messages for each conversation
+                    msg_response = service_client.table('messages').select('id', count='exact').eq('conversation_id', conv['id']).execute()
+                    message_count = msg_response.count if hasattr(msg_response, 'count') else 0
+
+                    conversations.append({
+                        'id': str(conv['id']),
+                        'title': conv['title'],
+                        'created_at': conv['created_at'],
+                        'message_count': message_count
+                    })
+
+        except Exception as conv_error:
+            raise HTTPException(status_code=500, detail=f"Failed to fetch conversations: {str(conv_error)}")
 
         return conversations
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -151,19 +221,35 @@ async def get_conversation_messages(
         if not google_id:
             raise HTTPException(status_code=400, detail="Google ID not found")
 
-        # Get messages with ownership check
-        messages = get_messages_by_conversation(conversation_id, google_id)
+        # Get service client for admin operations
+        service_client = get_supabase_service_client()
 
-        # If no messages returned, check if conversation exists
-        if not messages:
-            # Check if conversation exists at all
-            from app.core.db_client import execute_query
-            conv_check = execute_query("SELECT id FROM conversations WHERE id = %s", (conversation_id,))
-            if not conv_check:
-                raise HTTPException(status_code=404, detail="Conversation not found")
-            # If conversation exists but no messages returned, user doesn't own it
-            # (empty conversation is still valid - return empty list)
-            return []
+        # First verify user owns this conversation
+        user_response = service_client.table('users').select('*').eq('google_id', google_id).execute()
+        existing_user = user_response.data[0] if user_response.data else None
+
+        if not existing_user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Verify conversation exists and belongs to user
+        conv_response = service_client.table('conversations').select('*').eq('id', conversation_id).eq('user_id', existing_user['id']).execute()
+        conversation = conv_response.data[0] if conv_response.data else None
+
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        # Get messages for this conversation
+        msg_response = service_client.table('messages').select('id, role, content, created_at').eq('conversation_id', conversation_id).order('created_at').execute()
+
+        messages = []
+        if msg_response.data:
+            for msg in msg_response.data:
+                messages.append({
+                    'id': str(msg['id']),
+                    'role': msg['role'],
+                    'content': msg['content'],
+                    'created_at': msg['created_at']
+                })
 
         return messages
     except HTTPException:

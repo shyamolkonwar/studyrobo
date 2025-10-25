@@ -16,6 +16,7 @@ from app.tools.search_tools import get_study_material, get_study_material_tool
 from app.tools.career_tools import get_career_insights, get_career_insights_tool
 from app.tools.attendance_tools_supabase import mark_attendance, get_attendance_records, mark_attendance_tool, get_attendance_records_tool
 from app.tools.email_tools_supabase import get_unread_emails, draft_email, get_unread_emails_tool, draft_email_tool
+from app.tools.calendar_tools_supabase import get_upcoming_events, create_calendar_event, get_upcoming_events_tool, create_calendar_event_tool
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -32,7 +33,8 @@ def detect_intent(message: str) -> str:
         "study": ["study", "learn", "explain", "what is", "help me understand", "exam", "topic", "concept", "algorithm", "syllabus", "material", "notes", "homework", "assignment"],
         "career": ["career", "job", "salary", "work", "employment", "profession", "field", "market", "opportunity", "growth"],
         "attendance": ["attendance", "present", "absent", "mark", "class", "course"],
-        "email": ["email", "gmail", "inbox", "draft", "send", "message", "unread", "check"]
+        "email": ["email", "gmail", "inbox", "draft", "send", "message", "unread", "check"],
+        "calendar": ["calendar", "schedule", "event", "meeting", "appointment", "agenda", "today", "tomorrow", "week", "upcoming", "create", "add", "book", "remind"]
     }
 
     # Check for each intent category
@@ -51,6 +53,7 @@ def create_system_prompt(intent: str) -> str:
         "career": "You are a helpful career guidance assistant. You have access to a tool that can search for career insights and job market information. Use the get_career_insights tool when students ask about career prospects, job trends, salary information, or professional development. Provide helpful and realistic career advice.",
         "attendance": "You are a helpful academic assistant. You have access to tools that can mark student attendance and retrieve attendance records using Supabase. Use the mark_attendance tool when students need to record their presence in class. Be efficient and provide clear confirmations.",
         "email": "You are a helpful communication assistant. You have access to tools that can fetch unread emails and draft new messages using Google OAuth tokens. Use the get_unread_emails tool to check for important messages, and use the draft_email tool to compose new emails. Help students manage their inbox efficiently.",
+        "calendar": "You are a helpful scheduling assistant. You have access to tools that can fetch upcoming calendar events and create new events using Google Calendar. Use the get_upcoming_events tool to check schedules and agendas, and use the create_calendar_event tool to schedule new meetings, study sessions, or appointments. Help students stay organized and on top of their commitments.",
         "general": "You are a helpful student mentor assistant that provides guidance on various academic and personal topics. Be supportive, informative, and encouraging."
     }
 
@@ -120,6 +123,34 @@ async def execute_tool(tool_name: str, tool_args: Dict[str, Any], google_access_
                 to=tool_args.get("to", ""),
                 subject=tool_args.get("subject", ""),
                 body=tool_args.get("body", "")
+            )
+        elif tool_name == "get_upcoming_events":
+            logger.info(f"📅 CALENDAR TOOL USED: Fetching upcoming events (max: {tool_args.get('max_results', 10)})")
+            if not google_id:
+                return {
+                    "success": False,
+                    "error": "User authentication required",
+                    "message": "Please log in to access calendar functionality."
+                }
+            return await get_upcoming_events(
+                user_id=google_id,
+                max_results=tool_args.get("max_results", 10)
+            )
+        elif tool_name == "create_calendar_event":
+            logger.info(f"📝 CALENDAR EVENT TOOL USED: Creating event '{tool_args.get('title', '')}'")
+            if not google_id:
+                return {
+                    "success": False,
+                    "error": "User authentication required",
+                    "message": "Please log in to create calendar events."
+                }
+            return await create_calendar_event(
+                user_id=google_id,
+                title=tool_args.get("title", ""),
+                start_time=tool_args.get("start_time", ""),
+                end_time=tool_args.get("end_time", ""),
+                description=tool_args.get("description", ""),
+                location=tool_args.get("location", "")
             )
         else:
             logger.warning(f"⚠️ UNKNOWN TOOL REQUESTED: {tool_name}")
@@ -283,12 +314,69 @@ Please synthesize this information into a clear, helpful answer. Focus on being 
             return response
 
     elif tool_name == "get_career_insights":
-        insights = result.get("insights", "")
-        if not insights:
+        insights = result.get("insights", {})
+        extracted_content = result.get("extracted_content", "")
+
+        if not insights and not extracted_content:
             field = extract_career_field(original_message)
             return f"I couldn't find specific career insights for '{field}'. Please try a different career field or provide more details about your interests."
 
-        response = f"Here are some career insights:\n\n{insights}"
+        # If we have extracted content, use LLM to synthesize a comprehensive answer
+        if extracted_content and len(extracted_content.strip()) > 100:
+            try:
+                llm_provider = get_llm_provider()
+
+                synthesis_prompt = f"""Based on the following career insights and market information, please provide a comprehensive and well-structured answer to the user's career question: "{original_message}"
+
+Career Information Context:
+{extracted_content[:4000]}  # Limit context to avoid token limits
+
+Please synthesize this information into a clear, helpful career advice response. Focus on:
+- Current job market trends and demand
+- Salary expectations and growth opportunities
+- Required skills and qualifications
+- Realistic career advice and next steps
+- Be encouraging and practical
+
+If the context doesn't fully answer the question, provide general guidance based on the field mentioned."""
+
+                # Get LLM response using the synthesis prompt
+                synthesis_response = await llm_provider.create_completion(
+                    messages=[{"role": "user", "content": synthesis_prompt}],
+                    tools=[],  # No tools needed for synthesis
+                    tool_choice=None,
+                    max_tokens=1200,
+                    temperature=0.3
+                )
+
+                # Extract the answer from the response
+                answer = synthesis_response['choices'][0]['message']['content']
+
+                # Add a note about the source
+                answer += "\n\n*This career advice is based on current market data and industry insights. Career opportunities can vary by location and individual circumstances.*"
+
+                return answer
+
+            except Exception as e:
+                logger.error(f"Error synthesizing career answer with LLM: {str(e)}")
+                # Fall back to basic insights if LLM synthesis fails
+
+        # Fallback to basic insights formatting
+        insights_list = insights.get("insights", [])
+        if insights_list:
+            response = "Here are some career insights I found:\n\n"
+            for insight in insights_list[:5]:  # Limit to 5 insights
+                title = insight.get("title", "")
+                summary = insight.get("summary", "")
+                source = insight.get("source", "")
+                if title and summary:
+                    response += f"**{title}**\n{summary}\n"
+                    if source and source != "industry_standard" and source != "market_analysis":
+                        response += f"*Source: {source}*\n"
+                    response += "\n"
+        else:
+            field = extract_career_field(original_message)
+            response = f"I found some general career information for '{field}', but detailed insights are limited. Consider exploring specific sub-fields or current market trends."
 
     elif tool_name == "mark_attendance":
         message = result.get("message", "")
@@ -333,6 +421,29 @@ Please synthesize this information into a clear, helpful answer. Focus on being 
         else:
             response = f"There was an issue creating your email draft: {result.get('message', 'Unknown error')}"
 
+    elif tool_name == "get_upcoming_events":
+        events = result.get("events", [])
+        if not events:
+            response = "You have no upcoming events in your calendar."
+        else:
+            response = f"You have {len(events)} upcoming event(s):\n\n"
+            for i, event in enumerate(events[:5], 1):  # Limit to 5 events
+                title = event.get("summary", "No Title")
+                start_time = event.get("start", "Unknown time")
+                location = event.get("location", "")
+                location_str = f" at {location}" if location else ""
+                response += f"{i}. **{title}** - {start_time}{location_str}\n"
+            if len(events) > 5:
+                response += f"\n(Showing 5 most recent out of {len(events)} events)"
+
+    elif tool_name == "create_calendar_event":
+        event_id = result.get("event_id")
+        html_link = result.get("html_link")
+        if event_id:
+            response = f"✅ {result.get('message', 'Event created successfully!')}\n\nYou can view it here: {html_link}"
+        else:
+            response = f"There was an issue creating your calendar event: {result.get('message', 'Unknown error')}"
+
     else:
         response = f"Tool executed successfully, but I don't know how to format the response for {tool_name}."
 
@@ -348,7 +459,9 @@ def get_all_tools() -> List[Dict[str, Any]]:
         mark_attendance_tool,
         get_attendance_records_tool,  # Added new tool
         get_unread_emails_tool,
-        draft_email_tool
+        draft_email_tool,
+        get_upcoming_events_tool,
+        create_calendar_event_tool
     ]
 
 async def get_llm_response_with_supabase(
@@ -491,6 +604,41 @@ async def get_llm_response_with_supabase(
                 )
             tool_results.append({
                 "tool_name": "draft_email" if any(word in message.lower() for word in ["draft", "write", "compose", "send"]) else "get_unread_emails",
+                "tool_result": tool_result
+            })
+
+        elif intent == "calendar":
+            # Determine if user wants to check events or create event
+            if any(word in message.lower() for word in ["create", "add", "schedule", "book", "new"]):
+                # For now, we'll need to extract event details from the message
+                # In a production system, this could use more sophisticated NLP
+                logger.info(f"📝 CALENDAR INTENT: Forcing create_calendar_event tool")
+                # This is a simplified approach - in production you'd want better parsing
+                tool_result = await execute_tool(
+                    "create_calendar_event",
+                    {
+                        "title": "New Event",  # Would need better extraction
+                        "start_time": "",  # Would need better extraction
+                        "end_time": "",  # Would need better extraction
+                        "description": message,
+                        "location": ""
+                    },
+                    google_access_token=google_access_token,
+                    user_id=user_id,
+                    google_id=google_id
+                )
+            else:
+                # Default to getting upcoming events
+                logger.info(f"📅 CALENDAR INTENT: Forcing get_upcoming_events tool")
+                tool_result = await execute_tool(
+                    "get_upcoming_events",
+                    {"max_results": 10},
+                    google_access_token=google_access_token,
+                    user_id=user_id,
+                    google_id=google_id
+                )
+            tool_results.append({
+                "tool_name": "create_calendar_event" if any(word in message.lower() for word in ["create", "add", "schedule", "book", "new"]) else "get_upcoming_events",
                 "tool_result": tool_result
             })
 

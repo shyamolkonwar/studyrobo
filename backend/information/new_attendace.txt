@@ -1,0 +1,91 @@
+The New "Attendance Manager"
+
+Your page needs to be split into two parts:
+
+The "Action" Bar: Quick actions you do every day.
+
+The "Dashboard": The data that tells you if you're safe.
+
+Here are the widgets you'll build.
+
+Section 1: The "Action" Bar
+
+This stays at the top, but we're making it smarter.
+
+Widget 1: Mark Attendance (Your old card)
+
+Keep it simple. Don't waste space.
+
+Card: "Mark Today's Attendance"
+
+Input: "Course Code"
+
+Button: "Mark Present"
+
+Widget 2: The "Target" (The Most Important New Feature)
+
+How can you track progress if you don't know the goal?
+
+Card: "My Goal"
+
+Input: "My university requires... [ 75 ] % attendance."
+
+Button: "Set Target"
+
+This one input—the 75% target—will power every other widget on this page.
+
+Section 2: The "Am I Safe?" Dashboard
+
+This is the new, data-driven section.
+
+Widget 3: The "At-a-Glance" Stats
+
+This answers the user's main question immediately. Use shadcn/ui Cards in a 2x2 grid.
+
+Overall Attendance: [ 82% ]
+
+(Show a big shadcn/ui Progress Bar under it. Color it Green (Safe), Yellow (Warning), or Red (At Risk) based on their 75% target.)
+
+Total Classes Attended: [ 41 / 50 ]
+
+(Attended / Total Classes)
+
+Total Classes Missed: [ 9 ]
+
+Allowed Absences Left: [ 2 ]
+
+(This is the "truth bomb" stat. It's the only number students really care about. Calculate it based on their target.)
+
+Widget 4: The "Course Breakdown" (The "Uh-Oh" List)
+
+This is where you show them where they are in trouble. Use a shadcn/ui Table.
+
+Title: "Status by Course"
+
+Columns:
+
+Course: CS101 - Data Structures
+
+Percentage: 90% (Put a mini-Progress Bar in the cell)
+
+Ratio: 9 / 10
+
+Status: (A shadcn/ui Badge. Green for "Safe", Red for "At Risk")
+
+This table lets them see, "Okay, I'm fine in CS, but I'm failing in BIO."
+
+Widget 5: The "Proof" (The Log)
+
+This replaces your useless "Attendance Tips" card. Students need proof, not tips.
+
+Title: "My Attendance Log"
+
+View: Use a shadcn/ui Calendar component.
+
+How it works:
+
+Fetch all attendance records from your Supabase attendance table.
+
+Put a green dot on every day in the calendar where they marked attendance.
+
+When they click a dotted day (e.g., Oct 25), show a list: "✅ CS101, ✅ BIO205
